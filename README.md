@@ -1,73 +1,88 @@
-# Welcome to your Lovable project
+# EventBuddy - AI-Powered Discord Event Management Bot
 
-## Project info
+## 🚀 What We're Building
 
-**URL**: https://lovable.dev/projects/aa14331d-cfcc-4e4e-b44f-164fff6d9404
+**EventBuddy** is an intelligent Discord bot that transforms event networking through AI-powered conversations and community building. It helps event organizers:
 
-## How can I edit this code?
+- **Import attendee data** from CSV exports (Luma, Eventbrite, etc.)
+- **Send smart reminders** to attendees before events
+- **Create post-event channels** automatically for networking
+- **Facilitate conversations** using AI that feels human and engaging
+- **Generate analytics** on attendee engagement and community growth
+- **Filter spam** while encouraging meaningful interactions
 
-There are several ways of editing your application.
+## 🎯 Key Features
 
-**Use Lovable**
+### For Event Organizers
+- **CSV-based workflow** - No complex integrations needed
+- **Privacy-first admin** - All management commands work in private channels/DMs
+- **Smart tagging options** - Choose between @everyone or individual mentions
+- **Real-time analytics** - Get engagement reports delivered privately
+- **Multi-event support** - Manage multiple events per Discord server
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/aa14331d-cfcc-4e4e-b44f-164fff6d9404) and start prompting.
+### For Attendees  
+- **Natural AI conversations** - Bot responds like a helpful human community manager
+- **Intelligent networking** - AI suggests relevant connections through @mentions
+- **Spam-free environment** - Advanced filtering keeps discussions meaningful
+- **Seamless experience** - No special commands needed, just chat naturally
 
-Changes made via Lovable will be committed automatically to this repo.
+## 🛠 Technology Stack
 
-**Use your preferred IDE**
+- **Frontend**: Next.js 14 + TypeScript + Tailwind CSS
+- **Backend**: Discord.js v14 + Supabase + Google Gemini AI
+- **Database**: PostgreSQL (via Supabase) with Row-Level Security
+- **Deployment**: Render, Railway, or Docker-ready
+- **AI**: Google Gemini API for natural conversation generation
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+## 📋 Setup Guides
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### 🏠 Local Development
+See **[LOCAL_SETUP.md](./LOCAL_SETUP.md)** for complete step-by-step local development instructions.
 
-Follow these steps:
+### 🌐 Production Deployment  
+See **[PRODUCTION_GUIDE.md](./PRODUCTION_GUIDE.md)** for detailed deployment instructions with screenshots and troubleshooting.
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+### 🚀 Quick Deploy
+See **[deployment_guide.md](./deployment_guide.md)** for technical deployment reference.
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## 🎨 Project Structure
 
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```
+eventbuddy/
+├── src/
+│   ├── components/ui/          # Reusable UI components
+│   ├── lib/
+│   │   ├── discord-bot.ts      # Main Discord bot logic
+│   │   ├── bot-manager.ts      # Bot lifecycle management
+│   │   └── database-schema.sql # Supabase database schema
+│   ├── pages/
+│   │   ├── Index.tsx          # Landing page with Discord OAuth
+│   │   ├── dashboard.tsx      # Admin dashboard (planned)
+│   │   └── api/               # API routes for bot and auth
+│   └── index.css              # Design system & animations
+├── LOCAL_SETUP.md             # Local development guide
+├── PRODUCTION_GUIDE.md        # Production deployment guide
+└── deployment_guide.md        # Technical deployment reference
 ```
 
-**Edit a file directly in GitHub**
+## 🔗 Useful Links
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- **Lovable Project**: [Edit in Lovable](https://lovable.dev/projects/aa14331d-cfcc-4e4e-b44f-164fff6d9404)
+- **Discord Developer Portal**: [Create Bot Application](https://discord.com/developers/applications)
+- **Supabase**: [Database & Authentication](https://supabase.com)
+- **Google AI Studio**: [Get Gemini API Key](https://aistudio.google.com/)
 
-**Use GitHub Codespaces**
+## 📞 Support
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+- Check the troubleshooting sections in the setup guides
+- Review Discord.js documentation for bot-related issues
+- Consult Supabase docs for database questions
+- Use Lovable's Discord community for general support
 
-## What technologies are used for this project?
+## 🏆 Success Metrics
 
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/aa14331d-cfcc-4e4e-b44f-164fff6d9404) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+- **>60%** attendee engagement rate post-event
+- **>95%** spam filtering accuracy  
+- **<5 minutes** host onboarding time
+- **4.5+/5** host satisfaction score
+- **Natural, human-like** AI conversations
