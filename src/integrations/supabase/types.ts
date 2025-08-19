@@ -14,6 +14,56 @@ export type Database = {
   }
   public: {
     Tables: {
+      attendees: {
+        Row: {
+          created_at: string
+          discord_handle: string | null
+          email: string | null
+          engagement_score: number | null
+          event_id: string
+          has_engaged: boolean | null
+          id: string
+          name: string
+          rsvp_status: string | null
+          ticket_type: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          discord_handle?: string | null
+          email?: string | null
+          engagement_score?: number | null
+          event_id: string
+          has_engaged?: boolean | null
+          id?: string
+          name: string
+          rsvp_status?: string | null
+          ticket_type?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          discord_handle?: string | null
+          email?: string | null
+          engagement_score?: number | null
+          event_id?: string
+          has_engaged?: boolean | null
+          id?: string
+          name?: string
+          rsvp_status?: string | null
+          ticket_type?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendees_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bot_activity_logs: {
         Row: {
           action_type: string
@@ -54,6 +104,59 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "discord_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversations: {
+        Row: {
+          ai_analysis: Json | null
+          ai_response: string | null
+          channel_id: string
+          created_at: string
+          discord_message_id: string
+          discord_user_id: string
+          engagement_level: string | null
+          event_id: string | null
+          id: string
+          message_content: string | null
+          response_message_id: string | null
+          sentiment_score: number | null
+        }
+        Insert: {
+          ai_analysis?: Json | null
+          ai_response?: string | null
+          channel_id: string
+          created_at?: string
+          discord_message_id: string
+          discord_user_id: string
+          engagement_level?: string | null
+          event_id?: string | null
+          id?: string
+          message_content?: string | null
+          response_message_id?: string | null
+          sentiment_score?: number | null
+        }
+        Update: {
+          ai_analysis?: Json | null
+          ai_response?: string | null
+          channel_id?: string
+          created_at?: string
+          discord_message_id?: string
+          discord_user_id?: string
+          engagement_level?: string | null
+          event_id?: string | null
+          id?: string
+          message_content?: string | null
+          response_message_id?: string | null
+          sentiment_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
             referencedColumns: ["id"]
           },
         ]
@@ -146,6 +249,96 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      events: {
+        Row: {
+          channel_id: string | null
+          created_at: string
+          event_date: string | null
+          event_name: string
+          event_theme: string | null
+          event_time: string | null
+          guild_id: string
+          host_discord_id: string
+          id: string
+          post_event_channel_id: string | null
+          status: string | null
+          total_attendees: number | null
+          updated_at: string
+        }
+        Insert: {
+          channel_id?: string | null
+          created_at?: string
+          event_date?: string | null
+          event_name: string
+          event_theme?: string | null
+          event_time?: string | null
+          guild_id: string
+          host_discord_id: string
+          id?: string
+          post_event_channel_id?: string | null
+          status?: string | null
+          total_attendees?: number | null
+          updated_at?: string
+        }
+        Update: {
+          channel_id?: string | null
+          created_at?: string
+          event_date?: string | null
+          event_name?: string
+          event_theme?: string | null
+          event_time?: string | null
+          guild_id?: string
+          host_discord_id?: string
+          id?: string
+          post_event_channel_id?: string | null
+          status?: string | null
+          total_attendees?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      guild_settings: {
+        Row: {
+          admin_role: string | null
+          ai_personality: string | null
+          analytics_enabled: boolean | null
+          bot_added_by: string
+          created_at: string
+          event_channel: string | null
+          guild_id: string
+          id: string
+          settings: Json | null
+          tagging_mode: string | null
+          updated_at: string
+        }
+        Insert: {
+          admin_role?: string | null
+          ai_personality?: string | null
+          analytics_enabled?: boolean | null
+          bot_added_by: string
+          created_at?: string
+          event_channel?: string | null
+          guild_id: string
+          id?: string
+          settings?: Json | null
+          tagging_mode?: string | null
+          updated_at?: string
+        }
+        Update: {
+          admin_role?: string | null
+          ai_personality?: string | null
+          analytics_enabled?: boolean | null
+          bot_added_by?: string
+          created_at?: string
+          event_channel?: string | null
+          guild_id?: string
+          id?: string
+          settings?: Json | null
+          tagging_mode?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       user_temp_emails: {
         Row: {
