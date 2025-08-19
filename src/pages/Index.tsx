@@ -6,13 +6,23 @@ import { Button } from '@/components/ui/button';
 const Index = () => {
   const [isConnecting, setIsConnecting] = useState(false);
 
-  const handleDiscordConnect = () => {
+  const handleDiscordConnect = async () => {
     setIsConnecting(true);
     
-    // In a real implementation, these would come from environment variables
-    const discordOAuthURL = `https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=8&scope=bot%20applications.commands&response_type=code&redirect_uri=${encodeURIComponent('http://localhost:3000/auth/callback')}`;
-    
-    window.location.href = discordOAuthURL;
+    try {
+      // Call our API to generate the bot invite link
+      const response = await fetch('/api/discord/bot-invite');
+      const data = await response.json();
+      
+      if (data.inviteUrl) {
+        window.location.href = data.inviteUrl;
+      } else {
+        throw new Error('Failed to generate invite URL');
+      }
+    } catch (error) {
+      console.error('Failed to connect to Discord:', error);
+      setIsConnecting(false);
+    }
   };
 
   return (
