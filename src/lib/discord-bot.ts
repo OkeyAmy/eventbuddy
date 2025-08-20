@@ -6,7 +6,11 @@ import {
   Message,
   ChannelType,
   PermissionFlagsBits,
-  EmbedBuilder
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -40,11 +44,13 @@ interface AttendeeData {
 }
 
 interface MessageAnalysis {
-  type: 'meaningful' | 'spam' | 'casual' | 'question';
-  score: number;
+  intent: 'greeting' | 'question' | 'event_management' | 'server_management' | 'general' | 'spam';
+  confidence: number;
   shouldRespond: boolean;
   topic: string;
   sentiment: 'positive' | 'neutral' | 'negative';
+  requiredAction?: string;
+  parameters?: any;
 }
 
 interface AIResponse {
@@ -52,6 +58,13 @@ interface AIResponse {
   shouldTag: boolean;
   suggestedTags: string[];
   engagementLevel: 'high' | 'medium' | 'low' | 'spam';
+  functionCalls?: FunctionCall[];
+}
+
+interface FunctionCall {
+  name: string;
+  parameters: any;
+  requiresConfirmation: boolean;
 }
 
 export class EventBuddyBot {
@@ -59,8 +72,16 @@ export class EventBuddyBot {
   private supabase: ReturnType<typeof createClient>;
   private gemini: GoogleGenerativeAI;
   private isReady = false;
+  private serverUrl: string;
 
   constructor(config: BotConfig) {
+    // Determine server URL based on environment
+    this.serverUrl = process.env.NODE_ENV === 'production' 
+      ? 'https://your-render-url.onrender.com' // Replace with your actual Render URL
+      : 'http://localhost:5173';
+
+    console.log(`🌐 Server URL set to: ${this.serverUrl}`);
+
     // Initialize Discord client with necessary intents
     this.client = new Client({
       intents: [
@@ -85,17 +106,36 @@ export class EventBuddyBot {
   private setupEventHandlers() {
     this.client.once('ready', () => {
       console.log(`✅ EventBuddy is online as ${this.client.user?.tag}!`);
+      console.log(`🌐 Connected to ${this.client.guilds.cache.size} servers`);
       this.isReady = true;
     });
 
     this.client.on('interactionCreate', async (interaction) => {
-      if (!interaction.isChatInputCommand()) return;
-      await this.handleSlashCommand(interaction);
+      try {
+        if (interaction.isChatInputCommand()) {
+          console.log(`🎯 Slash command received: ${interaction.commandName}`);
+          await this.handleSlashCommand(interaction);
+        } else if (interaction.isButton()) {
+          console.log(`🔘 Button interaction: ${interaction.customId}`);
+          await this.handleButtonInteraction(interaction);
+        }
+      } catch (error) {
+        console.error('❌ Error handling interaction:', error);
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: '❌ An error occurred while processing your request.', ephemeral: true });
+        }
+      }
     });
 
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot) return;
-      await this.handleMessage(message);
+      
+      console.log(`💬 Message received: "${message.content}" from ${message.author.username}`);
+      await this.handleNaturalLanguageMessage(message);
+    });
+
+    this.client.on('error', (error) => {
+      console.error('❌ Discord client error:', error);
     });
   }
 
@@ -139,6 +179,25 @@ export class EventBuddyBot {
           option.setName('message')
             .setDescription('Your message for the AI')
             .setRequired(true)
+        ),
+
+      new SlashCommandBuilder()
+        .setName('create_event')
+        .setDescription('Create a new event')
+        .addStringOption(option =>
+          option.setName('name')
+            .setDescription('Event name')
+            .setRequired(true)
+        )
+        .addStringOption(option =>
+          option.setName('date')
+            .setDescription('Event date (YYYY-MM-DD)')
+            .setRequired(false)
+        )
+        .addStringOption(option =>
+          option.setName('time')
+            .setDescription('Event time (HH:MM)')
+            .setRequired(false)
         )
     ];
 
@@ -146,13 +205,13 @@ export class EventBuddyBot {
       try {
         const devGuildId = process.env.DEV_GUILD_ID;
         if (devGuildId) {
-          console.log(`🔄 Registering GUILD commands for ${devGuildId} (instant updates)`);
+          console.log(`🔄 Registering GUILD commands for ${devGuildId}`);
           const guild = await this.client.guilds.fetch(devGuildId);
           await guild.commands.set(commands);
           console.log('✅ Guild slash commands registered successfully!');
         } else {
-          console.log('🔄 Registering GLOBAL commands (may take minutes to propagate)');
-        await this.client.application?.commands.set(commands);
+          console.log('🔄 Registering GLOBAL commands');
+          await this.client.application?.commands.set(commands);
           console.log('✅ Global slash commands registered successfully!');
         }
       } catch (error) {
@@ -165,6 +224,11 @@ export class EventBuddyBot {
     const { commandName } = interaction;
 
     try {
+      // Always acknowledge the interaction first
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: commandName !== 'help' });
+      }
+
       switch (commandName) {
         case 'import_event':
           await this.handleImportEvent(interaction);
@@ -181,67 +245,316 @@ export class EventBuddyBot {
         case 'input':
           await this.handleInputCommand(interaction);
           break;
+        case 'create_event':
+          await this.handleCreateEvent(interaction);
+          break;
         default:
-          await interaction.reply({ content: '❌ Unknown command!', ephemeral: true });
+          await this.editOrReply(interaction, '❌ Unknown command!');
       }
     } catch (error) {
-      console.error(`Error handling command ${commandName}:`, error);
-      if (!interaction.replied) {
-        await interaction.reply({ content: '❌ An error occurred while processing your command.', ephemeral: true });
+      console.error(`❌ Error handling command ${commandName}:`, error);
+      await this.editOrReply(interaction, '❌ An error occurred while processing your command.');
+    }
+  }
+
+  private async handleNaturalLanguageMessage(message: Message) {
+    try {
+      // Skip if in DM and not from event host, or if message is too short
+      if (message.content.length < 2) return;
+
+      // Analyze the message with AI
+      const analysis = await this.analyzeMessageIntent(message.content, {
+        author: message.author,
+        channelId: message.channelId,
+        guildId: message.guildId
+      });
+
+      console.log(`🧠 Message analysis:`, analysis);
+
+      // Only respond if confidence is high enough and should respond
+      if (analysis.shouldRespond && analysis.confidence > 0.6) {
+        // Generate AI response with function calling
+        const response = await this.generateSmartResponse(message, analysis);
+        
+        if (response) {
+          // Handle function calls first
+          if (response.functionCalls && response.functionCalls.length > 0) {
+            await this.handleFunctionCalls(message, response.functionCalls);
+          }
+
+          // Send the text response
+          if (response.text && response.text.trim()) {
+            await message.reply(response.text);
+          }
+        }
+      }
+
+      // Store conversation for analytics
+      await this.storeConversation(message, analysis);
+
+    } catch (error) {
+      console.error('❌ Error handling natural language message:', error);
+    }
+  }
+
+  private async analyzeMessageIntent(content: string, context: any): Promise<MessageAnalysis> {
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
+    
+    const prompt = `Analyze this Discord message for intent and determine if EventBuddy should respond:
+
+Message: "${content}"
+Context: Channel ID ${context.channelId}, Guild ID ${context.guildId}
+
+Classify the intent as one of:
+- greeting: Hello, hi, good morning, etc.
+- question: Questions about events, the bot, or general inquiries
+- event_management: Creating, ending, managing events
+- server_management: Creating channels, managing roles, server settings
+- general: General conversation, casual chat
+- spam: Very short, irrelevant, or spam content
+
+Consider these factors:
+- EventBuddy should respond to greetings warmly
+- Always respond to questions
+- Event/server management requires admin confirmation
+- Engage in relevant general conversation
+- Ignore obvious spam or very short messages
+
+Return JSON with this exact structure:
+{
+  "intent": "greeting|question|event_management|server_management|general|spam",
+  "confidence": 0.0-1.0,
+  "shouldRespond": true|false,
+  "topic": "brief topic description",
+  "sentiment": "positive|neutral|negative",
+  "requiredAction": "optional action needed",
+  "parameters": {}
+}`;
+
+    try {
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const analysis = JSON.parse(response.text());
+      
+      // Ensure confidence is reasonable
+      if (analysis.confidence > 0.95) analysis.confidence = 0.9;
+      if (analysis.confidence < 0.1) analysis.confidence = 0.1;
+      
+      return analysis;
+    } catch (error) {
+      console.error('❌ Error analyzing message intent:', error);
+      return {
+        intent: 'general',
+        confidence: 0.5,
+        shouldRespond: true,
+        topic: 'general conversation',
+        sentiment: 'neutral'
+      };
+    }
+  }
+
+  private async generateSmartResponse(message: Message, analysis: MessageAnalysis): Promise<AIResponse | null> {
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
+    
+    const prompt = `You are EventBuddy, a friendly AI Discord bot that helps manage events and servers. 
+
+User message: "${message.content}"
+Intent: ${analysis.intent}
+Topic: ${analysis.topic}
+Sentiment: ${analysis.sentiment}
+Author: @${message.author.username}
+
+Generate a helpful, engaging response that:
+1. Matches the user's intent and sentiment
+2. Provides useful information if they're asking questions
+3. Suggests appropriate actions for event/server management
+4. Stays friendly and conversational
+5. Keeps responses concise (1-2 sentences max)
+
+For event_management or server_management intents, you can suggest function calls but remind users that admin actions need confirmation.
+
+Available functions:
+- create_event(name, date, time)
+- end_event()
+- create_channel(name, type)
+- get_analytics()
+
+Response should be natural and helpful. If it's a simple greeting, respond warmly. If it's a question, provide a helpful answer.
+
+Generate a response:`;
+
+    try {
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+
+      return {
+        text,
+        shouldTag: false,
+        suggestedTags: [],
+        engagementLevel: analysis.confidence > 0.8 ? 'high' : 'medium',
+        functionCalls: this.extractFunctionCalls(text, analysis)
+      };
+    } catch (error) {
+      console.error('❌ Error generating response:', error);
+      return null;
+    }
+  }
+
+  private extractFunctionCalls(text: string, analysis: MessageAnalysis): FunctionCall[] {
+    const functionCalls: FunctionCall[] = [];
+
+    // Simple pattern matching for function calls
+    if (analysis.intent === 'event_management') {
+      if (text.toLowerCase().includes('create') && text.toLowerCase().includes('event')) {
+        functionCalls.push({
+          name: 'create_event',
+          parameters: {},
+          requiresConfirmation: true
+        });
+      }
+      if (text.toLowerCase().includes('end') && text.toLowerCase().includes('event')) {
+        functionCalls.push({
+          name: 'end_event',
+          parameters: {},
+          requiresConfirmation: true
+        });
+      }
+    }
+
+    return functionCalls;
+  }
+
+  private async handleFunctionCalls(message: Message, functionCalls: FunctionCall[]) {
+    for (const call of functionCalls) {
+      if (call.requiresConfirmation) {
+        // Create confirmation buttons
+        const confirmButton = new ButtonBuilder()
+          .setCustomId(`confirm_${call.name}_${message.id}`)
+          .setLabel('✅ Confirm')
+          .setStyle(ButtonStyle.Success);
+
+        const cancelButton = new ButtonBuilder()
+          .setCustomId(`cancel_${call.name}_${message.id}`)
+          .setLabel('❌ Cancel')
+          .setStyle(ButtonStyle.Danger);
+
+        const row = new ActionRowBuilder<ButtonBuilder>()
+          .addComponents(confirmButton, cancelButton);
+
+        await message.reply({
+          content: `🔐 Admin action required: Execute \`${call.name}\`?\nThis action requires confirmation from an event host.`,
+          components: [row]
+        });
       }
     }
   }
 
-  private async handleImportEvent(interaction: ChatInputCommandInteraction) {
-    // Check if this is a private channel or DM
-    if (!this.isPrivateChannel(interaction)) {
-      return interaction.reply({ 
-        content: '❌ This command can only be used in DMs or private channels!', 
+  private async handleButtonInteraction(interaction: any) {
+    const [action, functionName, messageId] = interaction.customId.split('_');
+    
+    if (action === 'confirm') {
+      // Check if user has admin permissions
+      const hasPermission = await this.checkAdminPermission(interaction.user.id, interaction.guildId);
+      
+      if (!hasPermission) {
+        await interaction.reply({ 
+          content: '❌ You need admin permissions to perform this action.', 
+          ephemeral: true 
+        });
+        return;
+      }
+
+      // Execute the function
+      await interaction.reply({ 
+        content: `⚡ Executing ${functionName}...`, 
+        ephemeral: true 
+      });
+      
+      // TODO: Implement actual function execution
+      await this.executeFunctionCall(functionName, {}, interaction);
+      
+    } else if (action === 'cancel') {
+      await interaction.reply({ 
+        content: '❌ Action cancelled.', 
         ephemeral: true 
       });
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    // Remove the buttons
+    await interaction.message.edit({ components: [] });
+  }
 
+  private async executeFunctionCall(functionName: string, parameters: any, interaction: any) {
+    try {
+      switch (functionName) {
+        case 'create_event':
+          await this.handleCreateEvent(interaction);
+          break;
+        case 'end_event':
+          await this.handleEndEvent(interaction);
+          break;
+        default:
+          await interaction.followUp({ 
+            content: `❌ Unknown function: ${functionName}`, 
+            ephemeral: true 
+          });
+      }
+    } catch (error) {
+      console.error(`❌ Error executing function ${functionName}:`, error);
+      await interaction.followUp({ 
+        content: `❌ Error executing ${functionName}`, 
+        ephemeral: true 
+      });
+    }
+  }
+
+  private async checkAdminPermission(userId: string, guildId: string): Promise<boolean> {
+    try {
+      // Check if user is event host or has admin role
+      const { data: eventHost } = await this.supabase
+        .from('events')
+        .select('host_discord_id')
+        .eq('guild_id', guildId)
+        .eq('host_discord_id', userId)
+        .eq('status', 'active')
+        .single();
+
+      return !!eventHost;
+    } catch (error) {
+      console.error('❌ Error checking admin permission:', error);
+      return false;
+    }
+  }
+
+  private async editOrReply(interaction: ChatInputCommandInteraction, content: string) {
+    try {
+      if (interaction.deferred) {
+        await interaction.editReply(content);
+      } else if (!interaction.replied) {
+        await interaction.reply({ content, ephemeral: true });
+      }
+    } catch (error) {
+      console.error('❌ Error sending interaction response:', error);
+    }
+  }
+
+  private async handleImportEvent(interaction: ChatInputCommandInteraction) {
     const eventName = interaction.options.getString('event_name')!;
     const csvFile = interaction.options.getAttachment('csv_file')!;
 
     if (!csvFile.url.endsWith('.csv')) {
-      return interaction.editReply('❌ Please upload a valid CSV file!');
+      return this.editOrReply(interaction, '❌ Please upload a valid CSV file!');
     }
 
     try {
-      // Download and parse CSV
-      const csvData = await this.downloadAndParseCSV(csvFile.url);
-      const attendees = await this.parseCSVData(csvData);
-
-      // Ask for tagging preference
-      const taggingEmbed = new EmbedBuilder()
-        .setTitle('🏷️ Tagging Preference')
-        .setDescription('How would you like to tag attendees in reminders?')
-        .addFields(
-          { name: '👥 Individual', value: 'Tag each attendee individually (@user1, @user2)', inline: true },
-          { name: '📢 Everyone', value: 'Use @everyone for all announcements', inline: true }
-        )
-        .setColor(0x5865F2);
-
-      await interaction.editReply({ 
-        content: '📊 **CSV processed successfully!**\nChoose your tagging preference:', 
-        embeds: [taggingEmbed] 
-      });
-
-      // In a real implementation, you'd handle the response with a collector
-      const taggingMode = 'individual'; // Default for now
-
-      // Store event data
+      // Store basic event info
       const { data: eventData, error } = await this.supabase
         .from('events')
         .insert({
-          name: eventName,
-          host_id: interaction.user.id,
+          event_name: eventName,
+          host_discord_id: interaction.user.id,
           guild_id: interaction.guildId,
-          tagging_mode: taggingMode,
-          csv_data: csvData,
           status: 'active'
         })
         .select()
@@ -249,147 +562,100 @@ export class EventBuddyBot {
 
       if (error) throw error;
 
-      // Store attendees
-      const attendeeRecords = attendees.map(attendee => ({
-        event_id: eventData.id,
-        name: attendee.name,
-        email: attendee.email,
-        discord_handle: attendee.discordHandle,
-        ticket_type: attendee.ticketType,
-        rsvp_status: attendee.rsvpStatus
-      }));
-
-      await this.supabase.from('attendees').insert(attendeeRecords);
-
-      // Schedule reminders
-      await this.scheduleReminders(eventData.id as string);
-
       const successEmbed = new EmbedBuilder()
-        .setTitle('✅ Event Imported Successfully!')
+        .setTitle('✅ Event Created Successfully!')
         .addFields(
-          { name: '📊 Attendees', value: attendees.length.toString(), inline: true },
-          { name: '🏷️ Tagging Mode', value: taggingMode, inline: true },
-          { name: '⏰ Reminders', value: 'Scheduled', inline: true }
+          { name: '📊 Event Name', value: eventName, inline: true },
+          { name: '👑 Host', value: `<@${interaction.user.id}>`, inline: true },
+          { name: '📅 Status', value: 'Active', inline: true }
         )
         .setColor(0x00ff00);
 
+      await this.editOrReply(interaction, '');
       await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
 
     } catch (error) {
-      console.error('Error importing event:', error);
-      await interaction.editReply('❌ Error processing CSV file. Please check the format and try again.');
+      console.error('❌ Error importing event:', error);
+      await this.editOrReply(interaction, '❌ Error creating event. Please try again.');
+    }
+  }
+
+  private async handleCreateEvent(interaction: ChatInputCommandInteraction) {
+    const eventName = interaction.options.getString('name')!;
+    const eventDate = interaction.options.getString('date');
+    const eventTime = interaction.options.getString('time');
+
+    try {
+      const { data: eventData, error } = await this.supabase
+        .from('events')
+        .insert({
+          event_name: eventName,
+          event_date: eventDate,
+          event_time: eventTime,
+          host_discord_id: interaction.user.id,
+          guild_id: interaction.guildId,
+          status: 'active'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      await this.editOrReply(interaction, `✅ Event "${eventName}" created successfully!`);
+    } catch (error) {
+      console.error('❌ Error creating event:', error);
+      await this.editOrReply(interaction, '❌ Error creating event. Please try again.');
     }
   }
 
   private async handleEndEvent(interaction: ChatInputCommandInteraction) {
-    if (!this.isPrivateChannel(interaction)) {
-      return interaction.reply({ 
-        content: '❌ Private channels only!', 
-        ephemeral: true 
-      });
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-
     try {
-      // Find active event for this host
       const { data: activeEvent } = await this.supabase
         .from('events')
         .select('*')
-        .eq('host_id', interaction.user.id)
+        .eq('host_discord_id', interaction.user.id)
         .eq('guild_id', interaction.guildId)
         .eq('status', 'active')
         .single();
 
       if (!activeEvent) {
-        return interaction.editReply('❌ No active event found!');
+        return this.editOrReply(interaction, '❌ No active event found!');
       }
 
-      // Create post-event channel
-      const eventName = (activeEvent.name as string).toLowerCase().replace(/\s+/g, '-');
-      const channelName = `${eventName}-${new Date().getMonth() + 1}${new Date().getDate()}`;
-      
-      const guild = await this.client.guilds.fetch(interaction.guildId!);
-      const postEventChannel = await guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        topic: `Post-event discussion for ${activeEvent.name}`,
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone,
-            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-          }
-        ]
-      });
-
-      // Generate and post icebreakers
-      const eventData: EventData = {
-        id: activeEvent.id as string,
-        name: activeEvent.name as string,
-        attendees: [],
-        taggingMode: (activeEvent.tagging_mode as 'individual' | 'everyone') || 'individual',
-        guildId: activeEvent.guild_id as string,
-        status: 'ended'
-      };
-      
-      const icebreakers = await this.generateIcebreakers(eventData);
-      await this.deployIcebreakers(postEventChannel.id, icebreakers, eventData);
-
-      // Update event status
       await this.supabase
         .from('events')
-        .update({ 
-          status: 'ended', 
-          post_event_channel_id: postEventChannel.id 
-        })
+        .update({ status: 'ended' })
         .eq('id', activeEvent.id);
 
-      const successEmbed = new EmbedBuilder()
-        .setTitle('🎉 Event Ended Successfully!')
-        .addFields(
-          { name: '📍 Channel', value: `<#${postEventChannel.id}>`, inline: true },
-          { name: '💬 Icebreakers', value: 'Posted', inline: true },
-          { name: '📊 Analytics', value: 'Available in 24-48 hours', inline: true }
-        )
-        .setColor(0x00ff00);
-
-      await interaction.editReply({ embeds: [successEmbed] });
-
+      await this.editOrReply(interaction, `✅ Event "${activeEvent.event_name}" ended successfully!`);
     } catch (error) {
-      console.error('Error ending event:', error);
-      await interaction.editReply('❌ Error ending event. Please try again.');
+      console.error('❌ Error ending event:', error);
+      await this.editOrReply(interaction, '❌ Error ending event. Please try again.');
     }
   }
 
   private async handleAnalytics(interaction: ChatInputCommandInteraction) {
-    if (!this.isPrivateChannel(interaction)) {
-      return interaction.reply({ 
-        content: '❌ Private channels only!', 
-        ephemeral: true 
-      });
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-
     try {
-      // Get analytics data
-      const analytics = await this.generateAnalytics(interaction.user.id, interaction.guildId!);
+      const { data: events } = await this.supabase
+        .from('events')
+        .select('*')
+        .eq('host_discord_id', interaction.user.id)
+        .eq('guild_id', interaction.guildId);
 
       const analyticsEmbed = new EmbedBuilder()
         .setTitle('📊 Event Analytics')
         .addFields(
-          { name: '👥 Total Attendees', value: analytics.totalAttendees.toString(), inline: true },
-          { name: '💬 Messages Sent', value: analytics.totalMessages.toString(), inline: true },
-          { name: '📈 Engagement Rate', value: `${analytics.engagementRate}%`, inline: true },
-          { name: '🔥 Top Contributors', value: analytics.topContributors.join(', ') || 'None yet', inline: false }
+          { name: '🎯 Total Events', value: (events?.length || 0).toString(), inline: true },
+          { name: '⚡ Active Events', value: (events?.filter(e => e.status === 'active').length || 0).toString(), inline: true },
+          { name: '✅ Completed Events', value: (events?.filter(e => e.status === 'ended').length || 0).toString(), inline: true }
         )
         .setColor(0x5865F2);
 
-      await interaction.editReply({ embeds: [analyticsEmbed] });
-
+      await this.editOrReply(interaction, '');
+      await interaction.followUp({ embeds: [analyticsEmbed], ephemeral: true });
     } catch (error) {
-      console.error('Error generating analytics:', error);
-      await interaction.editReply('❌ Error generating analytics.');
+      console.error('❌ Error generating analytics:', error);
+      await this.editOrReply(interaction, '❌ Error generating analytics.');
     }
   }
 
@@ -399,248 +665,49 @@ export class EventBuddyBot {
       .setDescription('AI-powered Discord event management')
       .addFields(
         { 
-          name: '🔒 Admin Commands (Private only)', 
-          value: '`/import_event` - Import CSV data\n`/end_event` - Create post-event channel\n`/analytics` - View engagement metrics',
+          name: '🎯 Event Commands', 
+          value: '`/create_event` - Create a new event\n`/end_event` - End current event\n`/analytics` - View event metrics',
           inline: false 
         },
         { 
-          name: '🌐 Public Commands', 
-          value: '`/help` - Show this help\n`/input` - Chat with AI',
+          name: '💬 AI Chat', 
+          value: '`/input <message>` - Chat with AI\n**Or just type naturally!** I understand:\n• "Hello" - Greetings\n• "Create an event" - Event management\n• "How do I..." - Questions',
           inline: false 
         },
         {
-          name: '📋 CSV Format',
-          value: 'Required columns: Name, Email, Discord Handle, Ticket Type, RSVP Status',
+          name: '✨ Natural Language',
+          value: 'You can chat with me naturally! No need for slash commands for basic conversations.',
           inline: false
         }
       )
       .setColor(0x5865F2);
 
-    await interaction.reply({ embeds: [helpEmbed], ephemeral: true });
+    await this.editOrReply(interaction, '');
+    await interaction.followUp({ embeds: [helpEmbed] });
   }
 
   private async handleInputCommand(interaction: ChatInputCommandInteraction) {
-    await interaction.deferReply();
-
     const userMessage = interaction.options.getString('message')!;
     
     try {
-      const response = await this.generateAIResponse({
-        message: userMessage,
+      const response = await this.generateAIResponse(userMessage, {
         author: interaction.user,
         channelId: interaction.channelId,
         isSlashCommand: true
       });
 
-      await interaction.editReply(response.text);
+      await this.editOrReply(interaction, response.text || 'I understand, but I\'m not sure how to respond to that.');
 
     } catch (error) {
-      console.error('Error generating AI response:', error);
-      await interaction.editReply('❌ Sorry, I encountered an error processing your message.');
+      console.error('❌ Error generating AI response:', error);
+      await this.editOrReply(interaction, '❌ Sorry, I encountered an error processing your message.');
     }
   }
 
-  private async handleMessage(message: Message) {
-    // Skip if bot message or not relevant
-    if (message.author.bot) return;
-
-    // Only respond in post-event channels or when mentioned
-    const shouldRespond = await this.shouldRespondToMessage(message);
-    if (!shouldRespond) return;
-
-    try {
-      // Analyze message
-      const analysis = await this.analyzeMessage(message.content, {
-        author: message.author,
-        channelId: message.channelId
-      });
-
-      // Store conversation
-      await this.storeConversation(message, analysis);
-
-      // Generate response based on analysis
-      if (analysis.shouldRespond && analysis.score > 0.3) {
-        const response = await this.generateEngagingResponse(message, analysis);
-        
-        if (response) {
-          const sentMessage = await message.reply(response.text);
-          
-          // Update conversation with AI response
-          await this.updateConversationWithResponse(message.id, response);
-        }
-      }
-
-    } catch (error) {
-      console.error('Error handling message:', error);
-    }
-  }
-
-  // Utility methods
-  private isPrivateChannel(interaction: ChatInputCommandInteraction): boolean {
-    // Check if it's a DM by looking at guild ID
-    return !interaction.guildId;
-  }
-
-  private async downloadAndParseCSV(url: string): Promise<string> {
-    const response = await fetch(url);
-    return await response.text();
-  }
-
-  private async parseCSVData(csvData: string): Promise<AttendeeData[]> {
-    const lines = csvData.split('\n');
-    const headers = lines[0].split(',').map(h => h.trim());
-    
-    const attendees: AttendeeData[] = [];
-    
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map(v => v.trim());
-      if (values.length >= 5) {
-        attendees.push({
-          name: values[0],
-          email: values[1],
-          discordHandle: values[2],
-          ticketType: values[3] || 'Standard',
-          rsvpStatus: values[4] || 'Confirmed'
-        });
-      }
-    }
-    
-    return attendees;
-  }
-
-  private async scheduleReminders(eventId: string): Promise<void> {
-    // Schedule reminder 24 hours before event
-    const reminderTime = new Date();
-    reminderTime.setHours(reminderTime.getHours() + 24);
-
-    await this.supabase.from('scheduled_jobs').insert({
-      job_type: 'reminder',
-      payload: { eventId, type: 'pre_event' },
-      scheduled_for: reminderTime.toISOString()
-    });
-  }
-
-  private async generateIcebreakers(event: EventData): Promise<string[]> {
+  private async generateAIResponse(message: string, context: any): Promise<AIResponse> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
     
-    const prompt = `Generate 3 engaging icebreaker questions for a post-event discussion about "${event.name}". 
-    Make them thoughtful, relevant to networking, and encourage participants to share insights.
-    Format: Return just the questions, one per line.`;
-
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    
-    return response.text().split('\n').filter(line => line.trim());
-  }
-
-  private async deployIcebreakers(channelId: string, icebreakers: string[], event: EventData): Promise<void> {
-    const channel = await this.client.channels.fetch(channelId);
-    if (!channel?.isTextBased()) return;
-
-    const welcomeEmbed = new EmbedBuilder()
-      .setTitle(`🎉 Welcome to ${event.name} Networking!`)
-      .setDescription('Great to see everyone here! Let\'s continue the conversation and make some connections.')
-      .setColor(0x5865F2);
-
-    if ('send' in channel) {
-      await channel.send({ embeds: [welcomeEmbed] });
-
-      // Post icebreakers with delay
-      for (let i = 0; i < icebreakers.length; i++) {
-        setTimeout(async () => {
-          if ('send' in channel) {
-            await channel.send(`💭 **Icebreaker ${i + 1}:** ${icebreakers[i]}`);
-          }
-        }, (i + 1) * 2000);
-      }
-    }
-  }
-
-  private async shouldRespondToMessage(message: Message): Promise<boolean> {
-    // Check if it's a post-event channel
-    const { data: event } = await this.supabase
-      .from('events')
-      .select('id')
-      .eq('post_event_channel_id', message.channelId)
-      .single();
-
-    return !!event || message.mentions.has(this.client.user!);
-  }
-
-  private async analyzeMessage(content: string, context: any): Promise<MessageAnalysis> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
-    
-    const prompt = `Analyze this message for engagement quality in a post-event networking context:
-    
-Message: "${content}"
-
-Classify as:
-- meaningful: Substantive contribution, question, or insight (score 0.7-1.0)  
-- spam: Single characters, dots, irrelevant content (score 0.0-0.2)
-- casual: Brief but relevant responses (score 0.3-0.6)
-- question: Direct questions seeking information
-
-Return JSON: {"type": "meaningful", "score": 0.8, "shouldRespond": true, "topic": "event insights", "sentiment": "positive"}`;
-
-    try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      return JSON.parse(response.text());
-    } catch (error) {
-      console.error('Error analyzing message:', error);
-      return {
-        type: 'casual',
-        score: 0.5,
-        shouldRespond: true,
-        topic: 'general',
-        sentiment: 'neutral'
-      };
-    }
-  }
-
-  private async generateEngagingResponse(message: Message, analysis: MessageAnalysis): Promise<AIResponse | null> {
-    if (analysis.score < 0.3) return null;
-
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
-    
-    const prompt = `You are EventBuddy, a friendly AI facilitating post-event networking. 
-
-Current message: "${message.content}"
-Author: @${message.author.username}
-Quality: ${analysis.type} (${analysis.score})
-
-Generate a warm, engaging response that:
-1. Acknowledges the contribution naturally
-2. Asks a thoughtful follow-up question
-3. Optionally suggests tagging relevant participants
-4. Keeps conversation flowing
-5. Stays professional but friendly
-
-Tone: Conversational, encouraging, human-like
-Length: 1-2 sentences max
-Response:`;
-
-    try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-
-      return {
-        text,
-        shouldTag: text.includes('@'),
-        suggestedTags: this.extractMentions(text),
-        engagementLevel: analysis.score > 0.7 ? 'high' : analysis.score > 0.4 ? 'medium' : 'low'
-      };
-    } catch (error) {
-      console.error('Error generating response:', error);
-      return null;
-    }
-  }
-
-  private async generateAIResponse(context: any): Promise<AIResponse> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
-    
-    const result = await model.generateContent(context.message);
+    const result = await model.generateContent(`You are EventBuddy, respond helpfully to: "${message}"`);
     const response = await result.response;
     
     return {
@@ -651,70 +718,20 @@ Response:`;
     };
   }
 
-  private extractMentions(text: string): string[] {
-    const mentions = text.match(/@\w+/g);
-    return mentions ? mentions.map(m => m.substring(1)) : [];
-  }
-
   private async storeConversation(message: Message, analysis: MessageAnalysis): Promise<void> {
-    await this.supabase.from('conversations').insert({
-      channel_id: message.channelId,
-      message_id: message.id,
-      author_discord_id: message.author.id,
-      content: message.content,
-      engagement_score: analysis.score,
-      response_type: analysis.type
-    });
-  }
-
-  private async updateConversationWithResponse(messageId: string, response: AIResponse): Promise<void> {
-    await this.supabase
-      .from('conversations')
-      .update({
-        ai_response: response.text,
-        tagged_users: response.suggestedTags
-      })
-      .eq('message_id', messageId);
-  }
-
-  private async generateAnalytics(hostId: string, guildId: string): Promise<any> {
-    // Get event data for this host/guild
-    const { data: events } = await this.supabase
-      .from('events')
-      .select('id, name')
-      .eq('host_id', hostId)
-      .eq('guild_id', guildId);
-
-    if (!events || events.length === 0) {
-      return {
-        totalAttendees: 0,
-        totalMessages: 0,
-        engagementRate: 0,
-        topContributors: []
-      };
+    try {
+      await this.supabase.from('conversations').insert({
+        channel_id: message.channelId,
+        discord_message_id: message.id,
+        discord_user_id: message.author.id,
+        message_content: message.content,
+        engagement_level: analysis.intent,
+        sentiment_score: analysis.confidence,
+        ai_analysis: analysis
+      });
+    } catch (error) {
+      console.error('❌ Error storing conversation:', error);
     }
-
-    // Calculate metrics
-    const eventIds = events.map(e => e.id);
-    
-    const { count: attendeeCount } = await this.supabase
-      .from('attendees')
-      .select('*', { count: 'exact' })
-      .in('event_id', eventIds);
-
-    const { count: messageCount } = await this.supabase
-      .from('conversations')
-      .select('*', { count: 'exact' })
-      .in('event_id', eventIds);
-
-    const engagementRate = attendeeCount ? Math.round((messageCount || 0) / attendeeCount * 100) : 0;
-
-    return {
-      totalAttendees: attendeeCount || 0,
-      totalMessages: messageCount || 0,
-      engagementRate,
-      topContributors: [] // TODO: Implement top contributors logic
-    };
   }
 
   public async start(token: string): Promise<void> {
@@ -727,5 +744,3 @@ Response:`;
     console.log('🛑 EventBuddy bot stopped.');
   }
 }
-
-
