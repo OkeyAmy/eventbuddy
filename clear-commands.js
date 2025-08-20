@@ -1,6 +1,6 @@
 import { Client, GatewayIntentBits } from 'discord.js';
 
-// Use your actual values from .env
+// Updated to use your provided values
 const DISCORD_BOT_TOKEN = 'MTQwNzM5MDM0NDU4NDIzNzEwNw.GAEFHl.izCtfOEw7sKg5L4m3klyJyX7E_mm8mUz1_9HJs';
 const DEV_GUILD_ID = '1407461521566601246';
 
@@ -78,8 +78,8 @@ client.once('ready', async () => {
     console.log('✅ New commands registered successfully!');
     
     console.log('\n🎉 Commands reset complete! You can now:');
-    console.log('1. Start your Next.js server: pnpm exec next dev -p 3000');
-    console.log('2. Go to http://localhost:3000/dashboard');
+    console.log('1. Start your Vite dev server: pnpm dev');
+    console.log('2. Go to http://localhost:5173/dashboard');
     console.log('3. Click "Start EventBuddy Bot"');
     console.log('4. Test /help or /input in Discord');
     

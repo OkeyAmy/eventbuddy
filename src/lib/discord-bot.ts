@@ -12,7 +12,7 @@ import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Types
-interface BotConfig {
+export interface BotConfig {
   token: string;
   supabaseUrl: string;
   supabaseKey: string;
@@ -54,7 +54,7 @@ interface AIResponse {
   engagementLevel: 'high' | 'medium' | 'low' | 'spam';
 }
 
-class EventBuddyBot {
+export class EventBuddyBot {
   private client: Client;
   private supabase: ReturnType<typeof createClient>;
   private gemini: GoogleGenerativeAI;
@@ -718,13 +718,8 @@ Response:`;
   }
 
   public async start(token: string): Promise<void> {
-    try {
-      await this.client.login(token);
-      console.log('🚀 EventBuddy bot started successfully!');
-    } catch (error) {
-      console.error('❌ Failed to start bot:', error);
-      throw error;
-    }
+    console.log('🚀 Starting EventBuddy bot...');
+    await this.client.login(token);
   }
 
   public async stop(): Promise<void> {
@@ -733,4 +728,4 @@ Response:`;
   }
 }
 
-export { EventBuddyBot, type BotConfig, type EventData, type AttendeeData };
+
