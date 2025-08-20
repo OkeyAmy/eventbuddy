@@ -8,7 +8,14 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "api:dev": "next",
+    "api:start": "next start",
+    "test:discord": "node test-discord-setup.js",
+    "clear:commands": "node clear-commands.js",
+    "bot:start:local": "curl -X POST http://localhost:3000/api/bot/start",
+    "bot:stop:local": "curl -X POST http://localhost:3000/api/bot/stop",
+    "bot:status:local": "curl http://localhost:3000/api/bot/status"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -49,6 +56,7 @@
     "csv-parser": "^3.2.0",
     "date-fns": "^3.6.0",
     "discord.js": "^14.21.0",
+    "dotenv": "^16.4.5",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",

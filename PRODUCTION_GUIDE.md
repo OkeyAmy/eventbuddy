@@ -7,9 +7,10 @@ This comprehensive guide will help you deploy EventBuddy to production, even if 
 We'll deploy using this recommended flow:
 1. **Connect to Supabase** using Lovable's native integration
 2. **Set up Discord Bot** for production
-3. **Deploy to Render** (free tier available)
-4. **Configure environment variables**
-5. **Test everything works**
+3. **Deploy to Render** (free tier available) - **Next.js API backend**
+4. **Deploy to Vercel/Netlify** - **Vite frontend** (or use Render for both)
+5. **Configure environment variables**
+6. **Test everything works**
 
 This approach is beginner-friendly and mostly free!
 
@@ -92,13 +93,14 @@ If you prefer manual setup:
    - Go to **"OAuth2"** → **"General"**
    - Add redirect URI (we'll update this after deployment)
 
-## 📡 Step 3: Deploy to Render
+## 📡 Step 3: Deploy Backend to Render (Next.js API)
 
-### Why Render?
+### Why Render for Backend?
 - Free tier available
 - Easy to use for beginners
 - Automatic deployments from GitHub
 - Built-in environment variable management
+- Perfect for Next.js API routes
 
 ### Deploy Steps:
 
@@ -121,10 +123,10 @@ If you prefer manual setup:
 
 4. **Configure Build Settings**:
    ```
-   Name: eventbuddy
+   Name: eventbuddy-backend
    Environment: Node
-   Build Command: npm install && npm run build
-   Start Command: npm start
+   Build Command: pnpm install && pnpm exec next build
+   Start Command: pnpm exec next start
    ```
 
 5. **Set Environment Variables**:
@@ -136,42 +138,110 @@ If you prefer manual setup:
    DISCORD_BOT_TOKEN=your_bot_token_from_step_2
    DISCORD_CLIENT_ID=your_application_id_from_discord
    DISCORD_CLIENT_SECRET=your_client_secret_from_discord
-   DISCORD_REDIRECT_URI=https://your-app.onrender.com/api/auth/discord-callback
+   DISCORD_REDIRECT_URI=https://your-backend.onrender.com/api/auth/discord-callback
    NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_key
    GEMINI_API_KEY=your_gemini_api_key
-   NEXT_PUBLIC_APP_URL=https://your-app.onrender.com
+   NEXT_PUBLIC_APP_URL=https://your-frontend-url.com
    ```
 
-   **Note**: Replace `your-app` with your actual Render app name!
+   **Note**: Replace `your-backend` with your actual Render app name!
 
 6. **Deploy**:
    - Click **"Create Web Service"**
    - Wait for deployment (usually 5-10 minutes)
-   - You'll get a URL like `https://your-app.onrender.com`
+   - You'll get a URL like `https://your-backend.onrender.com`
 
-## 🔧 Step 4: Update Discord OAuth
+## 🌐 Step 4: Deploy Frontend (Vite)
 
-1. **Get Your Deployment URL**:
-   - From Render dashboard, copy your app URL
-   - Should look like: `https://eventbuddy-abc123.onrender.com`
+### Option A: Deploy to Vercel (Recommended for Vite)
+
+1. **Go to Vercel**:
+   - Visit [vercel.com](https://vercel.com)
+   - Sign up with your GitHub account
+
+2. **Import Project**:
+   - Click **"New Project"**
+   - Import your GitHub repository
+   - Vercel will auto-detect it's a Vite project
+
+3. **Configure Build Settings**:
+   ```
+   Framework Preset: Vite
+   Build Command: pnpm build
+   Output Directory: dist
+   Install Command: pnpm install
+   ```
+
+4. **Set Environment Variables**:
+   ```
+   VITE_DISCORD_CLIENT_ID=your_discord_client_id
+   VITE_SUPABASE_URL=your_supabase_url
+   VITE_APP_URL=https://your-frontend.vercel.app
+   VITE_API_URL=https://your-backend.onrender.com
+   ```
+
+5. **Deploy**:
+   - Click **"Deploy"**
+   - Wait for build to complete
+
+### Option B: Deploy to Netlify
+
+1. **Go to Netlify**:
+   - Visit [netlify.com](https://netlify.com)
+   - Sign up with your GitHub account
+
+2. **Import Project**:
+   - Click **"New site from Git"**
+   - Connect your GitHub repository
+
+3. **Configure Build Settings**:
+   ```
+   Build command: pnpm build
+   Publish directory: dist
+   ```
+
+4. **Set Environment Variables**:
+   - Go to **Site settings** → **Environment variables**
+   - Add the same variables as Vercel
+
+### Option C: Deploy Both to Render
+
+If you prefer to keep everything on Render:
+
+1. **Create Second Web Service**:
+   - Click **"New +"** → **"Web Service"**
+   - Same repository, different configuration
+
+2. **Configure for Frontend**:
+   ```
+   Name: eventbuddy-frontend
+   Build Command: pnpm install && pnpm build
+   Start Command: pnpm preview
+   ```
+
+## 🔧 Step 5: Update Discord OAuth
+
+1. **Get Your Backend URL**:
+   - From Render dashboard, copy your backend app URL
+   - Should look like: `https://eventbuddy-backend-abc123.onrender.com`
 
 2. **Update Discord Application**:
    - Go back to Discord Developer Portal
    - Navigate to your production app → **"OAuth2"** → **"General"**
-   - Update redirect URI to: `https://your-app-url.onrender.com/api/auth/discord-callback`
+   - Update redirect URI to: `https://your-backend-url.onrender.com/api/auth/discord-callback`
    - **Save Changes**
 
-3. **Update Environment Variables in Render**:
-   - Go to your Render service
+3. **Update Environment Variables**:
+   - Go to your Render backend service
    - Click **"Environment"**
-   - Update these variables with your actual URL:
+   - Update these variables with your actual URLs:
      ```
-     DISCORD_REDIRECT_URI=https://your-actual-url.onrender.com/api/auth/discord-callback
-     NEXT_PUBLIC_APP_URL=https://your-actual-url.onrender.com
+     DISCORD_REDIRECT_URI=https://your-actual-backend-url.onrender.com/api/auth/discord-callback
+     NEXT_PUBLIC_APP_URL=https://your-actual-frontend-url.com
      ```
 
-## 🧠 Step 5: AI Configuration
+## 🧠 Step 6: AI Configuration
 
 1. **Verify Gemini API Key**:
    - Go to [Google AI Studio](https://aistudio.google.com/)
@@ -182,12 +252,23 @@ If you prefer manual setup:
    - Once deployed, the bot should respond naturally
    - If responses seem robotic, check API key configuration
 
-## ✅ Step 6: Testing Your Production Deployment
+## ✅ Step 7: Testing Your Production Deployment
 
-### Test the Web Interface
+### Test the Backend API
 
-1. **Visit Your App URL**:
-   - Go to your Render deployment URL
+1. **Check API Health**:
+   - Visit `https://your-backend.onrender.com/api/health`
+   - Should return a success response
+
+2. **Test Bot Start Endpoint**:
+   ```bash
+   curl -X POST https://your-backend.onrender.com/api/bot/start
+   ```
+
+### Test the Frontend
+
+1. **Visit Your Frontend URL**:
+   - Go to your Vercel/Netlify/Render frontend URL
    - Should see the EventBuddy landing page
    - Click **"Connect AI to Discord"**
 
@@ -224,7 +305,7 @@ If you prefer manual setup:
    - Use import command with your test CSV
    - Verify attendees are stored correctly
 
-## 🔒 Step 7: Security & Performance
+## 🔒 Step 8: Security & Performance
 
 ### Security Checklist:
 - [ ] Bot token is secret and not exposed
@@ -232,14 +313,16 @@ If you prefer manual setup:
 - [ ] OAuth redirect URI matches exactly
 - [ ] Database has Row Level Security enabled
 - [ ] No sensitive data in logs
+- [ ] Frontend environment variables are public-safe (VITE_*)
 
 ### Performance Optimization:
 - [ ] Enable Render auto-scaling if needed
 - [ ] Monitor Supabase usage quotas
 - [ ] Set up Gemini API usage alerts
 - [ ] Configure appropriate bot rate limiting
+- [ ] Use CDN for frontend assets (Vercel/Netlify provide this)
 
-## 📊 Step 8: Monitoring & Analytics
+## 📊 Step 9: Monitoring & Analytics
 
 ### Set Up Monitoring:
 
@@ -257,6 +340,11 @@ If you prefer manual setup:
    - Monitor bot uptime in Discord
    - Check command response times
    - Review message engagement rates
+
+4. **Frontend Monitoring**:
+   - Vercel/Netlify provide built-in analytics
+   - Monitor page load times
+   - Track user engagement
 
 ## 🐛 Troubleshooting Common Issues
 
@@ -292,15 +380,23 @@ If you prefer manual setup:
 3. Review error logs for AI service issues
 4. Test with simple prompts first
 
+### Frontend Not Loading
+**Symptoms**: Frontend shows errors or won't load
+**Solutions**:
+1. Check build logs in Vercel/Netlify
+2. Verify environment variables are set correctly
+3. Ensure API URL points to correct backend
+4. Check browser console for errors
+
 ### Deployment Failures
 **Symptoms**: Build fails, app won't start
 **Solutions**:
-1. Check build logs in Render
+1. Check build logs in deployment platform
 2. Verify all dependencies are installed
 3. Ensure Node.js version compatibility
 4. Check for syntax errors in code
 
-## 🚀 Step 9: Going Live
+## 🚀 Step 10: Going Live
 
 ### Final Checklist Before Going Live:
 - [ ] All tests pass
@@ -311,6 +407,7 @@ If you prefer manual setup:
 - [ ] Analytics tracking works
 - [ ] Monitoring is set up
 - [ ] Backup and recovery plan in place
+- [ ] Frontend and backend communicate properly
 
 ### Announcing Your Bot:
 1. **Create Invite Link**:
@@ -327,7 +424,7 @@ If you prefer manual setup:
    - Share on social media
    - Reach out to event organizer communities
 
-## 📈 Step 10: Scaling Considerations
+## 📈 Step 11: Scaling Considerations
 
 ### When Your Bot Grows:
 
@@ -351,6 +448,11 @@ If you prefer manual setup:
    - Ensure data isolation works correctly
    - Monitor resource usage per guild
 
+5. **Frontend Optimization**:
+   - Implement lazy loading
+   - Add service worker for offline support
+   - Optimize bundle size
+
 ## 🎉 Congratulations!
 
 You've successfully deployed EventBuddy to production! Your AI-powered Discord bot is now ready to help event organizers create engaging communities.
@@ -368,3 +470,80 @@ You've successfully deployed EventBuddy to production! Your AI-powered Discord b
 - Ask in the Lovable Discord community
 
 Remember: Successful deployment is just the beginning. The real value comes from helping event organizers create amazing community experiences!
+
+## 🚦 Bot Startup and Operations (Production)
+
+After deploying the backend, the Discord bot does not start automatically. You must explicitly start it via the API.
+
+- Start bot (PowerShell):
+```powershell
+Invoke-WebRequest -Uri "https://your-backend.onrender.com/api/bot/start" -Method POST
+```
+
+- Start bot (curl):
+```bash
+curl -X POST https://your-backend.onrender.com/api/bot/start
+```
+
+- Stop bot:
+```bash
+curl -X POST https://your-backend.onrender.com/api/bot/stop
+```
+
+- Check status:
+```bash
+curl https://your-backend.onrender.com/api/bot/status
+```
+
+What to expect after starting:
+- Bot appears online in your Discord server
+- Slash commands are available
+- API returns `{ running: true }` from `/api/bot/status`
+
+If you skip the start call:
+- Bot remains offline and won’t respond
+- Status will show `{ running: false }`
+
+## 🤖 Automate Bot Start (Recommended)
+
+Choose one of these options to auto-start the bot after deploy/restart:
+
+- Render Cron Job (every 5 minutes):
+  - Create a Cron Job on Render
+  - Command:
+    ```bash
+    curl -s -X POST https://your-backend.onrender.com/api/bot/start >/dev/null 2>&1 || true
+    ```
+  - This keeps the bot running even after restarts
+
+- External Uptime/Automation service:
+  - Use UptimeRobot, GitHub Actions, or any scheduler to POST the start endpoint on deploy
+
+- Advanced (single-process wrapper):
+  - Start Command (bash):
+    ```bash
+    bash -lc 'pnpm exec next start & sleep 10 && curl -s -X POST https://your-backend.onrender.com/api/bot/start || true; wait -n'
+    ```
+  - Note: This is optional and advanced; prefer Cron for simplicity
+
+## 🔐 Secure the Start/Stop Endpoints (Hardening)
+
+By default, the bot endpoints accept requests without auth. In production, protect them:
+
+- Add a shared secret header (example):
+  - Set env `BOT_ADMIN_TOKEN=some-long-random-string`
+  - Send header `x-bot-admin: <token>` in all start/stop requests
+  - Update your API handlers to verify the header before executing
+
+- Restrict by IP (if possible)
+- Never expose these URLs publicly without protection
+
+## 🧭 Production Quick Ops Summary
+
+- Start bot:
+  - PowerShell: `Invoke-WebRequest -Uri "https://your-backend.onrender.com/api/bot/start" -Method POST`
+  - curl: `curl -X POST https://your-backend.onrender.com/api/bot/start`
+- Stop bot: `curl -X POST https://your-backend.onrender.com/api/bot/stop`
+- Status: `curl https://your-backend.onrender.com/api/bot/status`
+
+Tip: Bookmark these in your runbook or scripts so your team can operate the bot easily.

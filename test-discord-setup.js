@@ -1,7 +1,17 @@
+import { config as loadEnv } from 'dotenv';
+// Prefer .env.local, then fallback to .env
+loadEnv({ path: '.env.local', override: true });
+loadEnv();
+
 import { Client, GatewayIntentBits } from 'discord.js';
 
-// Test the Discord bot setup with the new configuration
-const DISCORD_BOT_TOKEN = 'MTQwNzM5MDM0NDU4NDIzNzEwNw.GAEFHl.izCtfOEw7sKg5L4m3klyJyX7E_mm8mUz1_9HJs';
+// Test the Discord bot setup with environment configuration
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE';
+
+if (!DISCORD_BOT_TOKEN || DISCORD_BOT_TOKEN === 'YOUR_BOT_TOKEN_HERE') {
+  console.error('❌ Missing DISCORD_BOT_TOKEN. Set it in .env.local or .env, or export it in your shell.');
+  process.exit(1);
+}
 
 const client = new Client({
   intents: [
@@ -19,10 +29,9 @@ client.once('ready', () => {
   console.log('🎯 EventBuddy Discord bot is ready for use!');
   
   console.log('\n🚀 Next steps:');
-  console.log('1. Start your local server: pnpm dev');
-  console.log('2. Go to http://localhost:5173/dashboard');
-  console.log('3. Click "Start EventBuddy Bot"');
-  console.log('4. Test the new slash commands in Discord');
+  console.log('1. Start your local servers (Next API + Vite)');
+  console.log('2. POST to http://localhost:3000/api/bot/start to start the bot');
+  console.log('3. Test the slash commands in Discord');
   
   process.exit(0);
 });
