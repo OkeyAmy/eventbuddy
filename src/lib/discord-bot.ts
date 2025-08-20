@@ -10,7 +10,8 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ComponentType
+  ComponentType,
+  Partials
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -73,6 +74,46 @@ export class EventBuddyBot {
   private isReady = false;
   private serverUrl: string;
 
+  // Robust JSON extractor to tolerate code fences and partial JSON blocks
+  private extractJson<T = any>(raw: string): T {
+    // Fast path
+    try {
+      return JSON.parse(raw) as T;
+    } catch {}
+
+    // Strip Markdown code fences like ```json ... ```
+    const unfenced = raw
+      .replace(/^```(?:json|JSON)?\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
+    try {
+      return JSON.parse(unfenced) as T;
+    } catch {}
+
+    // Extract the first balanced JSON object
+    const start = unfenced.indexOf('{');
+    if (start !== -1) {
+      let depth = 0;
+      for (let i = start; i < unfenced.length; i++) {
+        const ch = unfenced[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            const candidate = unfenced.slice(start, i + 1);
+            try {
+              return JSON.parse(candidate) as T;
+            } catch {}
+            break;
+          }
+        }
+      }
+    }
+
+    // As a last resort, return a minimal default
+    return { } as T;
+  }
+
   constructor(config: BotConfig) {
     // Determine server URL based on environment
     this.serverUrl = process.env.NODE_ENV === 'production' 
@@ -89,7 +130,9 @@ export class EventBuddyBot {
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers
-      ]
+      ],
+      // Required to receive DM messages
+      partials: [Partials.Channel, Partials.Message, Partials.User]
     });
 
     // Initialize Supabase client
@@ -322,7 +365,7 @@ export class EventBuddyBot {
   }
 
   private async analyzeMessageIntent(content: string, context: any): Promise<MessageAnalysis> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
     const prompt = `Analyze this Discord message for intent and determine if EventBuddy should respond:
 
@@ -356,9 +399,27 @@ Return JSON with this exact structure:
 }`;
 
     try {
-      const result = await model.generateContent(prompt);
+      const generationConfig: any = {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            intent: { type: 'string', enum: ['greeting','question','event_management','server_management','general','spam'] },
+            confidence: { type: 'number' },
+            shouldRespond: { type: 'boolean' },
+            topic: { type: 'string' },
+            sentiment: { type: 'string', enum: ['positive','neutral','negative'] }
+          },
+          required: ['intent','confidence','shouldRespond','topic','sentiment']
+        }
+      };
+
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig
+      });
       const response = await result.response;
-      const analysis = JSON.parse(response.text());
+      const analysis = this.extractJson<MessageAnalysis>(response.text());
       
       // Ensure confidence is reasonable
       if (analysis.confidence > 0.95) analysis.confidence = 0.9;
@@ -378,184 +439,70 @@ Return JSON with this exact structure:
   }
 
   private async generateSmartResponse(message: Message, analysis: MessageAnalysis): Promise<AIResponse | null> {
-    try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `You are EventBuddy, a friendly AI Discord bot that helps manage events and servers. You can call functions to help users.`
-            },
-            {
-              role: 'user',
-              content: `User message: "${message.content}"
+		try {
+			const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+			
+			const prompt = `You are EventBuddy, a friendly AI Discord bot that helps manage events and servers.
+
+User message: "${message.content}"
 Intent: ${analysis.intent}
 Topic: ${analysis.topic}
 Author: @${message.author.username}
 
-Generate a helpful response. For event/server management, suggest appropriate function calls.`
-            }
-          ],
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: 'create_event',
-                description: 'Create a new event',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    eventName: { type: 'string', description: 'Name of the event' },
-                    eventDate: { type: 'string', description: 'Date of the event (YYYY-MM-DD)' },
-                    eventTime: { type: 'string', description: 'Time of the event (HH:MM)' }
-                  },
-                  required: ['eventName']
-                }
-              }
-            },
-            {
-              type: 'function', 
-              function: {
-                name: 'end_event',
-                description: 'End the current active event',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    eventId: { type: 'string', description: 'ID of event to end' }
-                  }
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'get_event_analytics',
-                description: 'Get analytics for events',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    eventId: { type: 'string', description: 'Specific event ID (optional)' }
-                  }
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'manage_server',
-                description: 'Manage server settings and permissions',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    action: { type: 'string', enum: ['create_role', 'delete_role', 'modify_permissions'] },
-                    target: { type: 'string', description: 'Target role or user' }
-                  },
-                  required: ['action']
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'create_channel',
-                description: 'Create a new channel for an event',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    channelName: { type: 'string', description: 'Name of the channel to create' },
-                    eventId: { type: 'string', description: 'ID of the event this channel is for' },
-                    channelType: { type: 'string', enum: ['text', 'voice'], description: 'Type of channel to create' },
-                    private: { type: 'boolean', description: 'Whether the channel should be private' }
-                  },
-                  required: ['channelName']
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'archive_channel',
-                description: 'Archive a channel',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    channelId: { type: 'string', description: 'ID of the channel to archive' },
-                    reason: { type: 'string', description: 'Reason for archiving' }
-                  },
-                  required: ['channelId']
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'delete_channel',
-                description: 'Delete a channel permanently',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    channelId: { type: 'string', description: 'ID of the channel to delete' },
-                    reason: { type: 'string', description: 'Reason for deletion' }
-                  },
-                  required: ['channelId']
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'rename_channel',
-                description: 'Rename a channel',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    channelId: { type: 'string', description: 'ID of the channel to rename' },
-                    newName: { type: 'string', description: 'New name for the channel' },
-                    reason: { type: 'string', description: 'Reason for renaming' }
-                  },
-                  required: ['channelId', 'newName']
-                }
-              }
-            }
-          ],
-          temperature: 0.7,
-          max_tokens: 300
-        })
-      });
+Return STRICT JSON with this schema:
+{
+  "text": "natural helpful reply",
+  "functionCalls": [
+    { "name": "create_event|end_event|get_event_analytics|manage_server|create_channel|archive_channel|delete_channel|rename_channel", "arguments": { } }
+  ]
+}
+If no function call is appropriate, return an empty array for "functionCalls". Do not include any additional text outside of JSON. Keep "text" concise (1-2 sentences).`;
 
-      const completion = await response.json();
+			const generationConfig: any = {
+				responseMimeType: 'application/json',
+				responseSchema: {
+					type: 'object',
+					properties: {
+						text: { type: 'string' },
+						functionCalls: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									name: { type: 'string' },
+									arguments: { 
+										type: 'object',
+										properties: {},
+										required: []
+									}
+								},
+								required: ['name','arguments']
+							}
+						}
+					},
+					required: ['text','functionCalls']
+				}
+			};
 
-      if (completion.choices[0].message.tool_calls) {
-        return {
-          text: completion.choices[0].message.content || '',
-          shouldTag: false,
-          suggestedTags: [],
-          engagementLevel: analysis.confidence > 0.8 ? 'high' : 'medium',
-          functionCalls: completion.choices[0].message.tool_calls.map((call: any) => ({
-            name: call.function.name,
-            arguments: JSON.parse(call.function.arguments)
-          }))
-        };
-      }
+			const result = await model.generateContent({
+				contents: [{ role: 'user', parts: [{ text: prompt }] }],
+				generationConfig
+			});
+			const response = await result.response;
+			const raw = response.text().trim();
+			const parsed = this.extractJson<{ text?: string; functionCalls?: Array<{ name: string; arguments: any }> }>(raw);
 
-      return {
-        text: completion.choices[0].message.content || 'I understand you, but I\'m not sure how to help with that right now.',
-        shouldTag: false,
-        suggestedTags: [],
-        engagementLevel: analysis.confidence > 0.8 ? 'high' : 'medium',
-        functionCalls: []
-      };
-
-    } catch (error) {
-      console.error('❌ Error generating response:', error);
-      return null;
-    }
+			return {
+				text: (parsed && parsed.text) ? parsed.text : raw,
+				shouldTag: false,
+				suggestedTags: [],
+				engagementLevel: analysis.confidence > 0.8 ? 'high' : 'medium',
+				functionCalls: Array.isArray(parsed?.functionCalls) ? parsed.functionCalls : []
+			};
+		} catch (error) {
+			console.error('❌ Error generating response:', error);
+			return null;
+		}
   }
 
 
@@ -854,7 +801,7 @@ Generate a helpful response. For event/server management, suggest appropriate fu
   }
 
   private async generateAIResponse(message: string, context: any): Promise<AIResponse> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
     const result = await model.generateContent(`You are EventBuddy, respond helpfully to: "${message}"`);
     const response = await result.response;

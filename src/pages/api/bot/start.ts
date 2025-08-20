@@ -33,7 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!config.supabaseUrl) missingVars.push('NEXT_PUBLIC_SUPABASE_URL or VITE_SUPABASE_URL');
     if (!config.supabaseKey) missingVars.push('SUPABASE_SERVICE_ROLE_KEY');
     if (!config.geminiApiKey) missingVars.push('GEMINI_API_KEY');
-    if (!process.env.OPENAI_API_KEY) missingVars.push('OPENAI_API_KEY');
+    // if (!process.env.OPENAI_API_KEY) missingVars.push('OPENAI_API_KEY');
 
     if (missingVars.length > 0) {
       console.error('❌ Missing environment variables:', missingVars);
