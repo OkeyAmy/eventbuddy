@@ -259,8 +259,10 @@ export class EventBuddyBot {
 
   private async handleNaturalLanguageMessage(message: Message) {
     try {
-      // Skip if in DM and not from event host, or if message is too short
-      if (message.content.length < 2) return;
+      // Skip if message is too short or empty
+      if (!message.content || message.content.length < 2) return;
+
+      console.log(`💬 Processing message: "${message.content}" from ${message.author.username} in ${message.guild?.name || 'DM'}`);
 
       // Analyze the message with AI
       const analysis = await this.analyzeMessageIntent(message.content, {
@@ -269,24 +271,35 @@ export class EventBuddyBot {
         guildId: message.guildId
       });
 
-      console.log(`🧠 Message analysis:`, analysis);
+      console.log(`🧠 Message analysis:`, {
+        intent: analysis.intent,
+        confidence: analysis.confidence,
+        shouldRespond: analysis.shouldRespond,
+        topic: analysis.topic
+      });
 
       // Only respond if confidence is high enough and should respond
       if (analysis.shouldRespond && analysis.confidence > 0.6) {
+        console.log(`✅ Responding to message with ${analysis.confidence} confidence`);
+        
         // Generate AI response with function calling
         const response = await this.generateSmartResponse(message, analysis);
         
         if (response) {
           // Handle function calls first
           if (response.functionCalls && response.functionCalls.length > 0) {
+            console.log(`🔧 Executing ${response.functionCalls.length} function calls`);
             await this.handleFunctionCalls(message, response.functionCalls);
           }
 
           // Send the text response
           if (response.text && response.text.trim()) {
+            console.log(`📤 Sending response: "${response.text.substring(0, 100)}..."`);
             await message.reply(response.text);
           }
         }
+      } else {
+        console.log(`⏭️ Skipping response (confidence: ${analysis.confidence}, shouldRespond: ${analysis.shouldRespond})`);
       }
 
       // Store conversation for analytics
@@ -294,6 +307,12 @@ export class EventBuddyBot {
 
     } catch (error) {
       console.error('❌ Error handling natural language message:', error);
+      // Send a friendly error message to the user
+      try {
+        await message.reply('❌ Sorry, I encountered an error while processing your message. Please try again!');
+      } catch (replyError) {
+        console.error('❌ Failed to send error message:', replyError);
+      }
     }
   }
 
@@ -736,7 +755,32 @@ Generate a response:`;
 
   public async start(token: string): Promise<void> {
     console.log('🚀 Starting EventBuddy bot...');
-    await this.client.login(token);
+    
+    // Add better error handling for login
+    try {
+      await this.client.login(token);
+      console.log('✅ Bot login successful');
+    } catch (error) {
+      console.error('❌ Bot login failed:', error);
+      
+      if (error.message?.includes('disallowed intents')) {
+        console.error(`
+🔧 FIX REQUIRED: Enable the following intents in Discord Developer Portal:
+1. Go to https://discord.com/developers/applications
+2. Select your bot application
+3. Go to "Bot" section
+4. Enable these Privileged Gateway Intents:
+   ✅ MESSAGE CONTENT INTENT (Critical!)
+   ✅ SERVER MEMBERS INTENT
+   ✅ PRESENCE INTENT (Optional)
+5. Save changes and restart bot
+
+Current issue: Your bot doesn't have permission to read message content.
+        `);
+      }
+      
+      throw error;
+    }
   }
 
   public async stop(): Promise<void> {
