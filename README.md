@@ -86,3 +86,48 @@ eventbuddy/
 - **<5 minutes** host onboarding time
 - **4.5+/5** host satisfaction score
 - **Natural, human-like** AI conversations
+
+---
+
+## 🔧 Production quick ops
+
+- Start bot (PowerShell):
+```powershell
+Invoke-WebRequest -Uri "https://your-backend.onrender.com/api/bot/start" -Method POST
+```
+- Start bot (curl):
+```bash
+curl -X POST https://your-backend.onrender.com/api/bot/start
+```
+- Stop bot:
+```bash
+curl -X POST https://your-backend.onrender.com/api/bot/stop
+```
+- Status:
+```bash
+curl https://your-backend.onrender.com/api/bot/status
+```
+
+### Optional automation (Render Cron)
+```bash
+curl -s -X POST https://your-backend.onrender.com/api/bot/start >/dev/null 2>&1 || true
+```
+
+### Secure the endpoints
+- Set `BOT_ADMIN_TOKEN` in your environment and require header `x-bot-admin: <token>` on start/stop handlers (docs include guidance).
+
+### package.json scripts you can use locally
+- `pnpm api:dev` (Next API locally)
+- `pnpm test:discord`
+- `pnpm clear:commands`
+- `pnpm bot:start:local`
+- `pnpm bot:stop:local`
+- `pnpm bot:status:local`
+
+### Ensure production envs include
+- Backend: `DISCORD_*`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, `NEXT_PUBLIC_APP_URL` (and optional `BOT_ADMIN_TOKEN`)
+- Frontend: `VITE_DISCORD_CLIENT_ID`, `VITE_SUPABASE_URL`, `VITE_API_URL`
+
+Note: `src/integrations/supabase/client.ts` uses an anon key (expected for client). For production, ensure your deployed frontend uses your own project’s anon key via env-based generation if needed.
+
+If you want us to wire the admin-token check into `src/pages/api/bot/start.ts` and `stop.ts`, let us know.
