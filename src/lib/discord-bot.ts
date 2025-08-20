@@ -63,8 +63,7 @@ interface AIResponse {
 
 interface FunctionCall {
   name: string;
-  parameters: any;
-  requiresConfirmation: boolean;
+  arguments: any;
 }
 
 export class EventBuddyBot {
@@ -78,7 +77,7 @@ export class EventBuddyBot {
     // Determine server URL based on environment
     this.serverUrl = process.env.NODE_ENV === 'production' 
       ? 'https://your-render-url.onrender.com' // Replace with your actual Render URL
-      : 'http://localhost:5173';
+      : 'http://localhost:8080'; // Frontend runs on 8080
 
     console.log(`🌐 Server URL set to: ${this.serverUrl}`);
 
@@ -121,8 +120,14 @@ export class EventBuddyBot {
         }
       } catch (error) {
         console.error('❌ Error handling interaction:', error);
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: '❌ An error occurred while processing your request.', ephemeral: true });
+        
+        // Only try to reply if it's a repliable interaction and hasn't been replied to
+        if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+          try {
+            await interaction.reply({ content: '❌ An error occurred while processing your request.', ephemeral: true });
+          } catch (replyError) {
+            console.error('❌ Failed to send error reply:', replyError);
+          }
         }
       }
     });
@@ -373,98 +378,223 @@ Return JSON with this exact structure:
   }
 
   private async generateSmartResponse(message: Message, analysis: MessageAnalysis): Promise<AIResponse | null> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-pro' });
-    
-    const prompt = `You are EventBuddy, a friendly AI Discord bot that helps manage events and servers. 
-
-User message: "${message.content}"
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: `You are EventBuddy, a friendly AI Discord bot that helps manage events and servers. You can call functions to help users.`
+            },
+            {
+              role: 'user',
+              content: `User message: "${message.content}"
 Intent: ${analysis.intent}
 Topic: ${analysis.topic}
-Sentiment: ${analysis.sentiment}
 Author: @${message.author.username}
 
-Generate a helpful, engaging response that:
-1. Matches the user's intent and sentiment
-2. Provides useful information if they're asking questions
-3. Suggests appropriate actions for event/server management
-4. Stays friendly and conversational
-5. Keeps responses concise (1-2 sentences max)
+Generate a helpful response. For event/server management, suggest appropriate function calls.`
+            }
+          ],
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'create_event',
+                description: 'Create a new event',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    eventName: { type: 'string', description: 'Name of the event' },
+                    eventDate: { type: 'string', description: 'Date of the event (YYYY-MM-DD)' },
+                    eventTime: { type: 'string', description: 'Time of the event (HH:MM)' }
+                  },
+                  required: ['eventName']
+                }
+              }
+            },
+            {
+              type: 'function', 
+              function: {
+                name: 'end_event',
+                description: 'End the current active event',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    eventId: { type: 'string', description: 'ID of event to end' }
+                  }
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'get_event_analytics',
+                description: 'Get analytics for events',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    eventId: { type: 'string', description: 'Specific event ID (optional)' }
+                  }
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'manage_server',
+                description: 'Manage server settings and permissions',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    action: { type: 'string', enum: ['create_role', 'delete_role', 'modify_permissions'] },
+                    target: { type: 'string', description: 'Target role or user' }
+                  },
+                  required: ['action']
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'create_channel',
+                description: 'Create a new channel for an event',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    channelName: { type: 'string', description: 'Name of the channel to create' },
+                    eventId: { type: 'string', description: 'ID of the event this channel is for' },
+                    channelType: { type: 'string', enum: ['text', 'voice'], description: 'Type of channel to create' },
+                    private: { type: 'boolean', description: 'Whether the channel should be private' }
+                  },
+                  required: ['channelName']
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'archive_channel',
+                description: 'Archive a channel',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    channelId: { type: 'string', description: 'ID of the channel to archive' },
+                    reason: { type: 'string', description: 'Reason for archiving' }
+                  },
+                  required: ['channelId']
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'delete_channel',
+                description: 'Delete a channel permanently',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    channelId: { type: 'string', description: 'ID of the channel to delete' },
+                    reason: { type: 'string', description: 'Reason for deletion' }
+                  },
+                  required: ['channelId']
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'rename_channel',
+                description: 'Rename a channel',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    channelId: { type: 'string', description: 'ID of the channel to rename' },
+                    newName: { type: 'string', description: 'New name for the channel' },
+                    reason: { type: 'string', description: 'Reason for renaming' }
+                  },
+                  required: ['channelId', 'newName']
+                }
+              }
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 300
+        })
+      });
 
-For event_management or server_management intents, you can suggest function calls but remind users that admin actions need confirmation.
+      const completion = await response.json();
 
-Available functions:
-- create_event(name, date, time)
-- end_event()
-- create_channel(name, type)
-- get_analytics()
-
-Response should be natural and helpful. If it's a simple greeting, respond warmly. If it's a question, provide a helpful answer.
-
-Generate a response:`;
-
-    try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      if (completion.choices[0].message.tool_calls) {
+        return {
+          text: completion.choices[0].message.content || '',
+          shouldTag: false,
+          suggestedTags: [],
+          engagementLevel: analysis.confidence > 0.8 ? 'high' : 'medium',
+          functionCalls: completion.choices[0].message.tool_calls.map((call: any) => ({
+            name: call.function.name,
+            arguments: JSON.parse(call.function.arguments)
+          }))
+        };
+      }
 
       return {
-        text,
+        text: completion.choices[0].message.content || 'I understand you, but I\'m not sure how to help with that right now.',
         shouldTag: false,
         suggestedTags: [],
         engagementLevel: analysis.confidence > 0.8 ? 'high' : 'medium',
-        functionCalls: this.extractFunctionCalls(text, analysis)
+        functionCalls: []
       };
+
     } catch (error) {
       console.error('❌ Error generating response:', error);
       return null;
     }
   }
 
-  private extractFunctionCalls(text: string, analysis: MessageAnalysis): FunctionCall[] {
-    const functionCalls: FunctionCall[] = [];
-
-    // Simple pattern matching for function calls
-    if (analysis.intent === 'event_management') {
-      if (text.toLowerCase().includes('create') && text.toLowerCase().includes('event')) {
-        functionCalls.push({
-          name: 'create_event',
-          parameters: {},
-          requiresConfirmation: true
-        });
-      }
-      if (text.toLowerCase().includes('end') && text.toLowerCase().includes('event')) {
-        functionCalls.push({
-          name: 'end_event',
-          parameters: {},
-          requiresConfirmation: true
-        });
-      }
-    }
-
-    return functionCalls;
-  }
 
   private async handleFunctionCalls(message: Message, functionCalls: FunctionCall[]) {
     for (const call of functionCalls) {
-      if (call.requiresConfirmation) {
-        // Create confirmation buttons
-        const confirmButton = new ButtonBuilder()
-          .setCustomId(`confirm_${call.name}_${message.id}`)
-          .setLabel('✅ Confirm')
-          .setStyle(ButtonStyle.Success);
-
-        const cancelButton = new ButtonBuilder()
-          .setCustomId(`cancel_${call.name}_${message.id}`)
-          .setLabel('❌ Cancel')
-          .setStyle(ButtonStyle.Danger);
-
-        const row = new ActionRowBuilder<ButtonBuilder>()
-          .addComponents(confirmButton, cancelButton);
-
-        await message.reply({
-          content: `🔐 Admin action required: Execute \`${call.name}\`?\nThis action requires confirmation from an event host.`,
-          components: [row]
-        });
+      try {
+        console.log(`🔧 Executing function: ${call.name}`, call.arguments);
+        
+        switch (call.name) {
+          case 'create_event':
+            await this.createEvent(message, call.arguments);
+            break;
+          case 'end_event':
+            await this.endEvent(message, call.arguments);
+            break;
+          case 'get_event_analytics':
+            await this.getEventAnalytics(message, call.arguments);
+            break;
+          case 'manage_server':
+            await this.manageServer(message, call.arguments);
+            break;
+          case 'create_channel':
+            await this.createEventChannel(message, call.arguments);
+            break;
+          case 'archive_channel':
+            await this.archiveChannel(message, call.arguments);
+            break;
+          case 'delete_channel':
+            await this.deleteChannel(message, call.arguments);
+            break;
+          case 'rename_channel':
+            await this.renameChannel(message, call.arguments);
+            break;
+          default:
+            console.log(`⚠️ Unknown function: ${call.name}`);
+        }
+      } catch (error) {
+        console.error(`❌ Error executing function ${call.name}:`, error);
+        await message.reply(`❌ Error executing ${call.name}: ${error.message}`);
       }
     }
   }
@@ -737,16 +867,298 @@ Generate a response:`;
     };
   }
 
-  private async storeConversation(message: Message, analysis: MessageAnalysis): Promise<void> {
+  // Channel management functions
+  private async createEvent(message: Message, args: any) {
+    const { eventName, eventDate, eventTime } = args;
+    
+    try {
+      const { data: eventData, error } = await this.supabase
+        .from('events')
+        .insert({
+          event_name: eventName,
+          event_date: eventDate,
+          event_time: eventTime,
+          host_discord_id: message.author.id,
+          guild_id: message.guildId,
+          status: 'active'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      await message.reply(`✅ Event "${eventName}" created successfully!`);
+    } catch (error) {
+      console.error('❌ Error creating event:', error);
+      await message.reply('❌ Error creating event. Please try again.');
+    }
+  }
+
+  private async endEvent(message: Message, args: any) {
+    try {
+      const { data: activeEvent } = await this.supabase
+        .from('events')
+        .select('*')
+        .eq('host_discord_id', message.author.id)
+        .eq('guild_id', message.guildId)
+        .eq('status', 'active')
+        .single();
+
+      if (!activeEvent) {
+        await message.reply('❌ No active event found!');
+        return;
+      }
+
+      await this.supabase
+        .from('events')
+        .update({ status: 'ended' })
+        .eq('id', activeEvent.id);
+
+      await message.reply(`✅ Event "${activeEvent.event_name}" ended successfully!`);
+    } catch (error) {
+      console.error('❌ Error ending event:', error);
+      await message.reply('❌ Error ending event. Please try again.');
+    }
+  }
+
+  private async getEventAnalytics(message: Message, args: any) {
+    try {
+      const { data: events } = await this.supabase
+        .from('events')
+        .select('*')
+        .eq('host_discord_id', message.author.id)
+        .eq('guild_id', message.guildId);
+
+      const analyticsEmbed = new EmbedBuilder()
+        .setTitle('📊 Event Analytics')
+        .addFields(
+          { name: '🎯 Total Events', value: (events?.length || 0).toString(), inline: true },
+          { name: '⚡ Active Events', value: (events?.filter(e => e.status === 'active').length || 0).toString(), inline: true },
+          { name: '✅ Completed Events', value: (events?.filter(e => e.status === 'ended').length || 0).toString(), inline: true }
+        )
+        .setColor(0x5865F2);
+
+      await message.reply({ embeds: [analyticsEmbed] });
+    } catch (error) {
+      console.error('❌ Error generating analytics:', error);
+      await message.reply('❌ Error generating analytics.');
+    }
+  }
+
+  private async manageServer(message: Message, args: any) {
+    // Implementation for server management
+    console.log('🏢 Managing server:', args);
+    await message.reply('🏢 Server management functionality coming soon!');
+  }
+
+  private async createEventChannel(message: Message, args: any) {
+    const { channelName, eventId, channelType = 'text', private: isPrivate = false } = args;
+    
+    if (!message.guild) {
+      await message.reply('❌ This command can only be used in a server!');
+      return;
+    }
+
+    try {
+      // Check if user has permission or is event host
+      const hasPermission = await this.checkEventHostPermission(message.author.id, eventId);
+      if (!hasPermission) {
+        await message.reply('⚠️ You need to be the event host to create channels for this event.');
+        return;
+      }
+
+      const channel = await message.guild.channels.create({
+        name: channelName,
+        type: channelType === 'voice' ? 2 : 0, // 0 = text, 2 = voice
+        parent: null, // You can set a category ID here
+        reason: `Event channel created for event ${eventId}`
+      });
+
+      await message.reply(`✅ Channel ${channel} created successfully!`);
+      
+      // Send welcome message to the new channel
+      if (channel.type === 0) { // text channel
+        const textChannel = channel as any;
+        await textChannel.send(`🎉 Welcome to ${channelName}! This channel was created for event management. I'll be here to help with any questions!`);
+        
+        // Set up auto-engagement for this channel
+        this.setupChannelEngagement(textChannel.id, eventId);
+      }
+
+      // Store channel info in database
+      await this.storeEventChannel(eventId, channel.id, channelName, channelType);
+
+    } catch (error) {
+      console.error('❌ Error creating channel:', error);
+      await message.reply('❌ Failed to create channel. Make sure I have the necessary permissions!');
+    }
+  }
+
+  private async archiveChannel(message: Message, args: any) {
+    const { channelId, reason = 'Channel archived' } = args;
+    
+    if (!message.guild) {
+      await message.reply('❌ This command can only be used in a server!');
+      return;
+    }
+
+    try {
+      const channel = message.guild.channels.cache.get(channelId);
+      if (!channel) {
+        await message.reply('❌ Channel not found!');
+        return;
+      }
+
+      // Move to archived category or add archived prefix
+      await channel.setName(`archived-${channel.name}`, reason);
+      await message.reply(`📁 Channel archived successfully!`);
+
+    } catch (error) {
+      console.error('❌ Error archiving channel:', error);
+      await message.reply('❌ Failed to archive channel!');
+    }
+  }
+
+  private async deleteChannel(message: Message, args: any) {
+    const { channelId, reason = 'Channel deleted' } = args;
+    
+    if (!message.guild) {
+      await message.reply('❌ This command can only be used in a server!');
+      return;
+    }
+
+    try {
+      // Ask for confirmation from event host
+      const confirmationMessage = await message.reply('⚠️ Are you sure you want to delete this channel? Type "CONFIRM" to proceed (expires in 30 seconds).');
+      
+      const filter = (m: any) => m.author.id === message.author.id && m.content === 'CONFIRM';
+      const textChannel = message.channel as any;
+      const collected = await textChannel.awaitMessages({ filter, max: 1, time: 30000 });
+
+      if (collected.size === 0) {
+        await message.reply('❌ Channel deletion cancelled (timeout).');
+        return;
+      }
+
+      const channel = message.guild.channels.cache.get(channelId);
+      if (!channel) {
+        await message.reply('❌ Channel not found!');
+        return;
+      }
+
+      await channel.delete(reason);
+      // Note: Can't reply to message after channel is deleted, so we log it
+      console.log(`✅ Channel ${channel.name} deleted successfully by ${message.author.username}`);
+
+    } catch (error) {
+      console.error('❌ Error deleting channel:', error);
+      await message.reply('❌ Failed to delete channel!');
+    }
+  }
+
+  private async renameChannel(message: Message, args: any) {
+    const { channelId, newName, reason = 'Channel renamed' } = args;
+    
+    if (!message.guild) {
+      await message.reply('❌ This command can only be used in a server!');
+      return;
+    }
+
+    try {
+      const channel = message.guild.channels.cache.get(channelId);
+      if (!channel) {
+        await message.reply('❌ Channel not found!');
+        return;
+      }
+
+      const oldName = channel.name;
+      await channel.setName(newName, reason);
+      await message.reply(`✅ Channel renamed from "${oldName}" to "${newName}"!`);
+
+    } catch (error) {
+      console.error('❌ Error renaming channel:', error);
+      await message.reply('❌ Failed to rename channel!');
+    }
+  }
+
+  private async checkEventHostPermission(userId: string, eventId?: string): Promise<boolean> {
+    // If no eventId, check if user has admin permissions
+    if (!eventId) {
+      return true; // For now, allow all users
+    }
+
+    try {
+      const { data: event } = await this.supabase
+        .from('events')
+        .select('host_discord_id')
+        .eq('id', eventId)
+        .single();
+
+      return event?.host_discord_id === userId;
+    } catch (error) {
+      console.error('Error checking event host permission:', error);
+      return false;
+    }
+  }
+
+  private setupChannelEngagement(channelId: string, eventId: string) {
+    // Set up periodic engagement messages for the channel
+    const engagementInterval = setInterval(async () => {
+      try {
+        const channel = this.client.channels.cache.get(channelId) as any;
+        if (!channel || channel.deleted) {
+          clearInterval(engagementInterval);
+          return;
+        }
+
+        // Send engagement message occasionally (every 30 minutes of no activity)
+        const messages = await channel.messages.fetch({ limit: 1 });
+        const lastMessage = messages.first();
+        
+        if (!lastMessage || (Date.now() - lastMessage.createdTimestamp) > 1800000) { // 30 minutes
+          const engagementMessages = [
+            "👋 How's everyone doing? Any questions about the event?",
+            "💡 Feel free to share your thoughts or ask any questions!",
+            "🎯 Don't forget to check out the event details!",
+            "🤝 Great to see everyone engaged! Keep the conversation going!"
+          ];
+          
+          const randomMessage = engagementMessages[Math.floor(Math.random() * engagementMessages.length)];
+          await channel.send(randomMessage);
+        }
+      } catch (error) {
+        console.error('Error in channel engagement:', error);
+        clearInterval(engagementInterval);
+      }
+    }, 900000); // Check every 15 minutes
+  }
+
+  private async storeEventChannel(eventId: string, channelId: string, channelName: string, channelType: string) {
+    try {
+      // Store channel info in conversations table for analytics
+      await this.supabase.from('conversations').insert({
+        channel_id: channelId,
+        event_id: eventId,
+        discord_user_id: 'system',
+        discord_message_id: 'channel_created',
+        message_content: `Channel "${channelName}" created (type: ${channelType})`,
+        ai_analysis: { action: 'channel_created', channel_type: channelType }
+      });
+    } catch (error) {
+      console.error('Error storing event channel:', error);
+    }
+  }
+
+  private async storeConversation(message: Message, analysis?: MessageAnalysis): Promise<void> {
     try {
       await this.supabase.from('conversations').insert({
         channel_id: message.channelId,
         discord_message_id: message.id,
         discord_user_id: message.author.id,
         message_content: message.content,
-        engagement_level: analysis.intent,
-        sentiment_score: analysis.confidence,
-        ai_analysis: analysis
+        engagement_level: analysis?.intent || 'general',
+        sentiment_score: analysis?.confidence || 0.5,
+        ai_analysis: analysis || {}
       });
     } catch (error) {
       console.error('❌ Error storing conversation:', error);
