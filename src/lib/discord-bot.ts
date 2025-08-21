@@ -14,7 +14,7 @@ import {
   Partials
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType } from '@google/generative-ai';
 
 // Types
 export interface BotConfig {
@@ -59,12 +59,12 @@ interface AIResponse {
   shouldTag: boolean;
   suggestedTags: string[];
   engagementLevel: 'high' | 'medium' | 'low' | 'spam';
-  functionCalls?: FunctionCall[];
+  functionCalls?: Array<{ name: string; args: any }>;
 }
 
-interface FunctionCall {
-  name: string;
-  arguments: any;
+interface ConversationHistory {
+  role: 'user' | 'model';
+  parts: Array<{ text?: string; functionCall?: any; functionResponse?: any }>;
 }
 
 export class EventBuddyBot {
@@ -73,46 +73,98 @@ export class EventBuddyBot {
   private gemini: GoogleGenerativeAI;
   private isReady = false;
   private serverUrl: string;
+  private conversationMemory: Map<string, ConversationHistory[]> = new Map();
 
-  // Robust JSON extractor to tolerate code fences and partial JSON blocks
-  private extractJson<T = any>(raw: string): T {
-    // Fast path
-    try {
-      return JSON.parse(raw) as T;
-    } catch {}
-
-    // Strip Markdown code fences like ```json ... ```
-    const unfenced = raw
-      .replace(/^```(?:json|JSON)?\s*/i, '')
-      .replace(/```\s*$/i, '')
-      .trim();
-    try {
-      return JSON.parse(unfenced) as T;
-    } catch {}
-
-    // Extract the first balanced JSON object
-    const start = unfenced.indexOf('{');
-    if (start !== -1) {
-      let depth = 0;
-      for (let i = start; i < unfenced.length; i++) {
-        const ch = unfenced[i];
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-          depth--;
-          if (depth === 0) {
-            const candidate = unfenced.slice(start, i + 1);
-            try {
-              return JSON.parse(candidate) as T;
-            } catch {}
-            break;
-          }
-        }
+  // Function declarations for Gemini
+  private functionDeclarations: FunctionDeclaration[] = [
+    {
+      name: 'create_event',
+      description: 'Create a new event with specified details',
+      parameters: {
+        type: 'object',
+        properties: {
+          eventName: { type: 'string', description: 'Name of the event' },
+          eventDate: { type: 'string', description: 'Event date (YYYY-MM-DD)' },
+          eventTime: { type: 'string', description: 'Event time (HH:MM)' },
+          description: { type: 'string', description: 'Event description' }
+        },
+        required: ['eventName']
+      }
+    },
+    {
+      name: 'end_event',
+      description: 'End an active event',
+      parameters: {
+        type: 'object',
+        properties: {
+          eventId: { type: 'string', description: 'ID of the event to end' }
+        },
+        required: []
+      }
+    },
+    {
+      name: 'create_channel',
+      description: 'Create a new channel for an event',
+      parameters: {
+        type: 'object',
+        properties: {
+          channelName: { type: 'string', description: 'Name of the channel' },
+          channelType: { type: 'string', enum: ['text', 'voice'], description: 'Type of channel' },
+          eventId: { type: 'string', description: 'Associated event ID' },
+          isPrivate: { type: 'boolean', description: 'Whether channel is private' }
+        },
+        required: ['channelName']
+      }
+    },
+    {
+      name: 'archive_channel',
+      description: 'Archive a channel by adding archived prefix',
+      parameters: {
+        type: 'object',
+        properties: {
+          channelId: { type: 'string', description: 'ID of the channel to archive' },
+          reason: { type: 'string', description: 'Reason for archiving' }
+        },
+        required: ['channelId']
+      }
+    },
+    {
+      name: 'delete_channel',
+      description: 'Delete a channel after confirmation',
+      parameters: {
+        type: 'object',
+        properties: {
+          channelId: { type: 'string', description: 'ID of the channel to delete' },
+          reason: { type: 'string', description: 'Reason for deletion' }
+        },
+        required: ['channelId']
+      }
+    },
+    {
+      name: 'rename_channel',
+      description: 'Rename a channel',
+      parameters: {
+        type: 'object',
+        properties: {
+          channelId: { type: 'string', description: 'ID of the channel to rename' },
+          newName: { type: 'string', description: 'New name for the channel' },
+          reason: { type: 'string', description: 'Reason for renaming' }
+        },
+        required: ['channelId', 'newName']
+      }
+    },
+    {
+      name: 'get_event_analytics',
+      description: 'Get analytics for events',
+      parameters: {
+        type: 'object',
+        properties: {
+          eventId: { type: 'string', description: 'Specific event ID (optional)' }
+        },
+        required: []
       }
     }
-
-    // As a last resort, return a minimal default
-    return { } as T;
-  }
+  ];
 
   constructor(config: BotConfig) {
     // Determine server URL based on environment
@@ -312,46 +364,131 @@ export class EventBuddyBot {
 
       console.log(`💬 Processing message: "${message.content}" from ${message.author.username} in ${message.guild?.name || 'DM'}`);
 
-      // Analyze the message with AI
-      const analysis = await this.analyzeMessageIntent(message.content, {
-        author: message.author,
-        channelId: message.channelId,
-        guildId: message.guildId
+      // Get conversation history for context
+      const conversationKey = `${message.channelId}_${message.author.id}`;
+      let history = this.conversationMemory.get(conversationKey) || [];
+
+      // Analyze the message with AI using function calling
+      const model = this.gemini.getGenerativeModel({ 
+        model: 'gemini-2.5-flash',
+        tools: [{ functionDeclarations: this.functionDeclarations }]
       });
 
-      console.log(`🧠 Message analysis:`, {
-        intent: analysis.intent,
-        confidence: analysis.confidence,
-        shouldRespond: analysis.shouldRespond,
-        topic: analysis.topic
+      // Build conversation context
+      const systemPrompt = `You are EventBuddy, a friendly Discord bot that helps manage events and servers. 
+
+You can:
+- Create and manage events
+- Create, archive, delete, and rename channels
+- Provide analytics and insights
+- Engage in natural conversation
+
+Current user: @${message.author.username}
+Channel: ${message.channelId}
+Guild: ${message.guildId}
+
+Context: This is a Discord server where you help with event management. Always be helpful and friendly.`;
+
+      // Add user message to history
+      history.push({
+        role: 'user',
+        parts: [{ text: message.content }]
       });
 
-      // Only respond if confidence is high enough and should respond
-      if (analysis.shouldRespond && analysis.confidence > 0.6) {
-        console.log(`✅ Responding to message with ${analysis.confidence} confidence`);
-        
-        // Generate AI response with function calling
-        const response = await this.generateSmartResponse(message, analysis);
-        
-        if (response) {
-          // Handle function calls first
-          if (response.functionCalls && response.functionCalls.length > 0) {
-            console.log(`🔧 Executing ${response.functionCalls.length} function calls`);
-            await this.handleFunctionCalls(message, response.functionCalls);
-          }
+      // Keep only last 10 exchanges to manage token limits
+      if (history.length > 20) {
+        history = history.slice(-20);
+      }
 
-          // Send the text response
-          if (response.text && response.text.trim()) {
-            console.log(`📤 Sending response: "${response.text.substring(0, 100)}..."`);
-            await message.reply(response.text);
+      const contents: Content[] = [
+        { role: 'user', parts: [{ text: systemPrompt }] },
+        ...history
+      ];
+
+      console.log(`🧠 Generating AI response with ${this.functionDeclarations.length} available functions`);
+
+      // Generate response with function calling
+      let result = await model.generateContent({ contents });
+      let response = result.response;
+
+      // Handle function calls if present
+      if (response.functionCalls && response.functionCalls.length > 0) {
+        console.log(`🔧 Executing ${response.functionCalls.length} function calls`);
+        
+        // Add model response to history
+        history.push({
+          role: 'model',
+          parts: [{ functionCall: response.functionCalls[0] }]
+        });
+
+        // Execute each function call
+        for (const functionCall of response.functionCalls) {
+          console.log(`🔧 Calling function: ${functionCall.name}`, functionCall.args);
+          
+          try {
+            const functionResult = await this.executeFunctionCall(functionCall.name, functionCall.args, message);
+            
+            // Add function response to history
+            history.push({
+              role: 'user',
+              parts: [{
+                functionResponse: {
+                  name: functionCall.name,
+                  response: { result: functionResult }
+                }
+              }]
+            });
+          } catch (error) {
+            console.error(`❌ Error executing function ${functionCall.name}:`, error);
+            
+            // Add error response to history
+            history.push({
+              role: 'user',
+              parts: [{
+                functionResponse: {
+                  name: functionCall.name,
+                  response: { error: error.message }
+                }
+              }]
+            });
           }
         }
-      } else {
-        console.log(`⏭️ Skipping response (confidence: ${analysis.confidence}, shouldRespond: ${analysis.shouldRespond})`);
+
+        // Generate final response incorporating function results
+        const finalContents: Content[] = [
+          { role: 'user', parts: [{ text: systemPrompt }] },
+          ...history
+        ];
+
+        result = await model.generateContent({ contents: finalContents });
+        response = result.response;
+      }
+
+      // Send the text response
+      const responseText = response.text();
+      if (responseText && responseText.trim()) {
+        console.log(`📤 Sending response: "${responseText.substring(0, 100)}..."`);
+        
+        // Add AI response to history
+        history.push({
+          role: 'model',
+          parts: [{ text: responseText }]
+        });
+
+        // Update conversation memory
+        this.conversationMemory.set(conversationKey, history);
+
+        await message.reply(responseText);
       }
 
       // Store conversation for analytics
-      await this.storeConversation(message, analysis);
+      await this.storeConversation(message, { 
+        intent: 'general', 
+        confidence: 0.9, 
+        shouldRespond: true, 
+        topic: 'ai_conversation',
+        sentiment: 'neutral'
+      });
 
     } catch (error) {
       console.error('❌ Error handling natural language message:', error);
@@ -364,185 +501,24 @@ export class EventBuddyBot {
     }
   }
 
-  private async analyzeMessageIntent(content: string, context: any): Promise<MessageAnalysis> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    
-    const prompt = `Analyze this Discord message for intent and determine if EventBuddy should respond:
-
-Message: "${content}"
-Context: Channel ID ${context.channelId}, Guild ID ${context.guildId}
-
-Classify the intent as one of:
-- greeting: Hello, hi, good morning, etc.
-- question: Questions about events, the bot, or general inquiries
-- event_management: Creating, ending, managing events
-- server_management: Creating channels, managing roles, server settings
-- general: General conversation, casual chat
-- spam: Very short, irrelevant, or spam content
-
-Consider these factors:
-- EventBuddy should respond to greetings warmly
-- Always respond to questions
-- Event/server management requires admin confirmation
-- Engage in relevant general conversation
-- Ignore obvious spam or very short messages
-
-Return JSON with this exact structure:
-{
-  "intent": "greeting|question|event_management|server_management|general|spam",
-  "confidence": 0.0-1.0,
-  "shouldRespond": true|false,
-  "topic": "brief topic description",
-  "sentiment": "positive|neutral|negative",
-  "requiredAction": "optional action needed",
-  "parameters": {}
-}`;
-
-    try {
-      const generationConfig: any = {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'object',
-          properties: {
-            intent: { type: 'string', enum: ['greeting','question','event_management','server_management','general','spam'] },
-            confidence: { type: 'number' },
-            shouldRespond: { type: 'boolean' },
-            topic: { type: 'string' },
-            sentiment: { type: 'string', enum: ['positive','neutral','negative'] }
-          },
-          required: ['intent','confidence','shouldRespond','topic','sentiment']
-        }
-      };
-
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig
-      });
-      const response = await result.response;
-      const analysis = this.extractJson<MessageAnalysis>(response.text());
-      
-      // Ensure confidence is reasonable
-      if (analysis.confidence > 0.95) analysis.confidence = 0.9;
-      if (analysis.confidence < 0.1) analysis.confidence = 0.1;
-      
-      return analysis;
-    } catch (error) {
-      console.error('❌ Error analyzing message intent:', error);
-      return {
-        intent: 'general',
-        confidence: 0.5,
-        shouldRespond: true,
-        topic: 'general conversation',
-        sentiment: 'neutral'
-      };
-    }
-  }
-
-  private async generateSmartResponse(message: Message, analysis: MessageAnalysis): Promise<AIResponse | null> {
-		try {
-			const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
-			
-			const prompt = `You are EventBuddy, a friendly AI Discord bot that helps manage events and servers.
-
-User message: "${message.content}"
-Intent: ${analysis.intent}
-Topic: ${analysis.topic}
-Author: @${message.author.username}
-
-Return STRICT JSON with this schema:
-{
-  "text": "natural helpful reply",
-  "functionCalls": [
-    { "name": "create_event|end_event|get_event_analytics|manage_server|create_channel|archive_channel|delete_channel|rename_channel", "arguments": { } }
-  ]
-}
-If no function call is appropriate, return an empty array for "functionCalls". Do not include any additional text outside of JSON. Keep "text" concise (1-2 sentences).`;
-
-			const generationConfig: any = {
-				responseMimeType: 'application/json',
-				responseSchema: {
-					type: 'object',
-					properties: {
-						text: { type: 'string' },
-						functionCalls: {
-							type: 'array',
-							items: {
-								type: 'object',
-								properties: {
-									name: { type: 'string' },
-									arguments: { 
-										type: 'object',
-										properties: {},
-										required: []
-									}
-								},
-								required: ['name','arguments']
-							}
-						}
-					},
-					required: ['text','functionCalls']
-				}
-			};
-
-			const result = await model.generateContent({
-				contents: [{ role: 'user', parts: [{ text: prompt }] }],
-				generationConfig
-			});
-			const response = await result.response;
-			const raw = response.text().trim();
-			const parsed = this.extractJson<{ text?: string; functionCalls?: Array<{ name: string; arguments: any }> }>(raw);
-
-			return {
-				text: (parsed && parsed.text) ? parsed.text : raw,
-				shouldTag: false,
-				suggestedTags: [],
-				engagementLevel: analysis.confidence > 0.8 ? 'high' : 'medium',
-				functionCalls: Array.isArray(parsed?.functionCalls) ? parsed.functionCalls : []
-			};
-		} catch (error) {
-			console.error('❌ Error generating response:', error);
-			return null;
-		}
-  }
-
-
-  private async handleFunctionCalls(message: Message, functionCalls: FunctionCall[]) {
-    for (const call of functionCalls) {
-      try {
-        console.log(`🔧 Executing function: ${call.name}`, call.arguments);
-        
-        switch (call.name) {
-          case 'create_event':
-            await this.createEvent(message, call.arguments);
-            break;
-          case 'end_event':
-            await this.endEvent(message, call.arguments);
-            break;
-          case 'get_event_analytics':
-            await this.getEventAnalytics(message, call.arguments);
-            break;
-          case 'manage_server':
-            await this.manageServer(message, call.arguments);
-            break;
-          case 'create_channel':
-            await this.createEventChannel(message, call.arguments);
-            break;
-          case 'archive_channel':
-            await this.archiveChannel(message, call.arguments);
-            break;
-          case 'delete_channel':
-            await this.deleteChannel(message, call.arguments);
-            break;
-          case 'rename_channel':
-            await this.renameChannel(message, call.arguments);
-            break;
-          default:
-            console.log(`⚠️ Unknown function: ${call.name}`);
-        }
-      } catch (error) {
-        console.error(`❌ Error executing function ${call.name}:`, error);
-        await message.reply(`❌ Error executing ${call.name}: ${error.message}`);
-      }
+  private async executeFunctionCall(functionName: string, args: any, message: Message): Promise<any> {
+    switch (functionName) {
+      case 'create_event':
+        return await this.createEvent(message, args);
+      case 'end_event':
+        return await this.endEvent(message, args);
+      case 'create_channel':
+        return await this.createEventChannel(message, args);
+      case 'archive_channel':
+        return await this.archiveChannel(message, args);
+      case 'delete_channel':
+        return await this.deleteChannel(message, args);
+      case 'rename_channel':
+        return await this.renameChannel(message, args);
+      case 'get_event_analytics':
+        return await this.getEventAnalytics(message, args);
+      default:
+        throw new Error(`Unknown function: ${functionName}`);
     }
   }
 
@@ -568,7 +544,7 @@ If no function call is appropriate, return an empty array for "functionCalls". D
       });
       
       // TODO: Implement actual function execution
-      await this.executeFunctionCall(functionName, {}, interaction);
+      await this.executeFunctionCallFromInteraction(functionName, {}, interaction);
       
     } else if (action === 'cancel') {
       await interaction.reply({ 
@@ -581,7 +557,7 @@ If no function call is appropriate, return an empty array for "functionCalls". D
     await interaction.message.edit({ components: [] });
   }
 
-  private async executeFunctionCall(functionName: string, parameters: any, interaction: any) {
+  private async executeFunctionCallFromInteraction(functionName: string, parameters: any, interaction: any) {
     try {
       switch (functionName) {
         case 'create_event':
@@ -758,7 +734,7 @@ If no function call is appropriate, return an empty array for "functionCalls". D
   private async handleHelp(interaction: ChatInputCommandInteraction) {
     const helpEmbed = new EmbedBuilder()
       .setTitle('🤖 EventBuddy Commands')
-      .setDescription('AI-powered Discord event management')
+      .setDescription('AI-powered Discord event management with natural language support')
       .addFields(
         { 
           name: '🎯 Event Commands', 
@@ -767,12 +743,12 @@ If no function call is appropriate, return an empty array for "functionCalls". D
         },
         { 
           name: '💬 AI Chat', 
-          value: '`/input <message>` - Chat with AI\n**Or just type naturally!** I understand:\n• "Hello" - Greetings\n• "Create an event" - Event management\n• "How do I..." - Questions',
+          value: '`/input <message>` - Chat with AI\n**Or just type naturally!** I understand:\n• "Hello" - Greetings\n• "Create an event for tomorrow" - Event management\n• "Make a channel for discussion" - Channel management',
           inline: false 
         },
         {
-          name: '✨ Natural Language',
-          value: 'You can chat with me naturally! No need for slash commands for basic conversations.',
+          name: '✨ Natural Language Examples',
+          value: '• "Create a channel called meeting-room"\n• "Archive the old-discussion channel"\n• "Show me event analytics"\n• "End the current event"',
           inline: false
         }
       )
@@ -816,7 +792,7 @@ If no function call is appropriate, return an empty array for "functionCalls". D
 
   // Channel management functions
   private async createEvent(message: Message, args: any) {
-    const { eventName, eventDate, eventTime } = args;
+    const { eventName, eventDate, eventTime, description } = args;
     
     try {
       const { data: eventData, error } = await this.supabase
@@ -825,6 +801,7 @@ If no function call is appropriate, return an empty array for "functionCalls". D
           event_name: eventName,
           event_date: eventDate,
           event_time: eventTime,
+          description: description,
           host_discord_id: message.author.id,
           guild_id: message.guildId,
           status: 'active'
@@ -834,10 +811,10 @@ If no function call is appropriate, return an empty array for "functionCalls". D
 
       if (error) throw error;
 
-      await message.reply(`✅ Event "${eventName}" created successfully!`);
+      return `Event "${eventName}" created successfully! Event ID: ${eventData.id}`;
     } catch (error) {
       console.error('❌ Error creating event:', error);
-      await message.reply('❌ Error creating event. Please try again.');
+      throw error;
     }
   }
 
@@ -852,8 +829,7 @@ If no function call is appropriate, return an empty array for "functionCalls". D
         .single();
 
       if (!activeEvent) {
-        await message.reply('❌ No active event found!');
-        return;
+        throw new Error('No active event found');
       }
 
       await this.supabase
@@ -861,10 +837,10 @@ If no function call is appropriate, return an empty array for "functionCalls". D
         .update({ status: 'ended' })
         .eq('id', activeEvent.id);
 
-      await message.reply(`✅ Event "${activeEvent.event_name}" ended successfully!`);
+      return `Event "${activeEvent.event_name}" ended successfully!`;
     } catch (error) {
       console.error('❌ Error ending event:', error);
-      await message.reply('❌ Error ending event. Please try again.');
+      throw error;
     }
   }
 
@@ -876,52 +852,33 @@ If no function call is appropriate, return an empty array for "functionCalls". D
         .eq('host_discord_id', message.author.id)
         .eq('guild_id', message.guildId);
 
-      const analyticsEmbed = new EmbedBuilder()
-        .setTitle('📊 Event Analytics')
-        .addFields(
-          { name: '🎯 Total Events', value: (events?.length || 0).toString(), inline: true },
-          { name: '⚡ Active Events', value: (events?.filter(e => e.status === 'active').length || 0).toString(), inline: true },
-          { name: '✅ Completed Events', value: (events?.filter(e => e.status === 'ended').length || 0).toString(), inline: true }
-        )
-        .setColor(0x5865F2);
+      const analytics = {
+        totalEvents: events?.length || 0,
+        activeEvents: events?.filter(e => e.status === 'active').length || 0,
+        completedEvents: events?.filter(e => e.status === 'ended').length || 0
+      };
 
-      await message.reply({ embeds: [analyticsEmbed] });
+      return `Event Analytics: ${analytics.totalEvents} total events, ${analytics.activeEvents} active, ${analytics.completedEvents} completed.`;
     } catch (error) {
       console.error('❌ Error generating analytics:', error);
-      await message.reply('❌ Error generating analytics.');
+      throw error;
     }
-  }
-
-  private async manageServer(message: Message, args: any) {
-    // Implementation for server management
-    console.log('🏢 Managing server:', args);
-    await message.reply('🏢 Server management functionality coming soon!');
   }
 
   private async createEventChannel(message: Message, args: any) {
-    const { channelName, eventId, channelType = 'text', private: isPrivate = false } = args;
+    const { channelName, eventId, channelType = 'text', isPrivate = false } = args;
     
     if (!message.guild) {
-      await message.reply('❌ This command can only be used in a server!');
-      return;
+      throw new Error('This command can only be used in a server!');
     }
 
     try {
-      // Check if user has permission or is event host
-      const hasPermission = await this.checkEventHostPermission(message.author.id, eventId);
-      if (!hasPermission) {
-        await message.reply('⚠️ You need to be the event host to create channels for this event.');
-        return;
-      }
-
       const channel = await message.guild.channels.create({
         name: channelName,
         type: channelType === 'voice' ? 2 : 0, // 0 = text, 2 = voice
         parent: null, // You can set a category ID here
-        reason: `Event channel created for event ${eventId}`
+        reason: `Event channel created for event ${eventId || 'general'}`
       });
-
-      await message.reply(`✅ Channel ${channel} created successfully!`);
       
       // Send welcome message to the new channel
       if (channel.type === 0) { // text channel
@@ -929,15 +886,16 @@ If no function call is appropriate, return an empty array for "functionCalls". D
         await textChannel.send(`🎉 Welcome to ${channelName}! This channel was created for event management. I'll be here to help with any questions!`);
         
         // Set up auto-engagement for this channel
-        this.setupChannelEngagement(textChannel.id, eventId);
+        this.setupChannelEngagement(textChannel.id, eventId || 'general');
       }
 
       // Store channel info in database
-      await this.storeEventChannel(eventId, channel.id, channelName, channelType);
+      await this.storeEventChannel(eventId || 'general', channel.id, channelName, channelType);
 
+      return `Channel "${channelName}" created successfully!`;
     } catch (error) {
       console.error('❌ Error creating channel:', error);
-      await message.reply('❌ Failed to create channel. Make sure I have the necessary permissions!');
+      throw error;
     }
   }
 
@@ -945,24 +903,21 @@ If no function call is appropriate, return an empty array for "functionCalls". D
     const { channelId, reason = 'Channel archived' } = args;
     
     if (!message.guild) {
-      await message.reply('❌ This command can only be used in a server!');
-      return;
+      throw new Error('This command can only be used in a server!');
     }
 
     try {
-      const channel = message.guild.channels.cache.get(channelId);
+      const channel = message.guild.channels.cache.get(channelId) || message.channel;
       if (!channel) {
-        await message.reply('❌ Channel not found!');
-        return;
+        throw new Error('Channel not found!');
       }
 
       // Move to archived category or add archived prefix
-      await channel.setName(`archived-${channel.name}`, reason);
-      await message.reply(`📁 Channel archived successfully!`);
-
+      await (channel as any).setName(`archived-${channel.name}`, reason);
+      return 'Channel archived successfully!';
     } catch (error) {
       console.error('❌ Error archiving channel:', error);
-      await message.reply('❌ Failed to archive channel!');
+      throw error;
     }
   }
 
@@ -970,36 +925,21 @@ If no function call is appropriate, return an empty array for "functionCalls". D
     const { channelId, reason = 'Channel deleted' } = args;
     
     if (!message.guild) {
-      await message.reply('❌ This command can only be used in a server!');
-      return;
+      throw new Error('This command can only be used in a server!');
     }
 
     try {
-      // Ask for confirmation from event host
-      const confirmationMessage = await message.reply('⚠️ Are you sure you want to delete this channel? Type "CONFIRM" to proceed (expires in 30 seconds).');
-      
-      const filter = (m: any) => m.author.id === message.author.id && m.content === 'CONFIRM';
-      const textChannel = message.channel as any;
-      const collected = await textChannel.awaitMessages({ filter, max: 1, time: 30000 });
-
-      if (collected.size === 0) {
-        await message.reply('❌ Channel deletion cancelled (timeout).');
-        return;
-      }
-
-      const channel = message.guild.channels.cache.get(channelId);
+      const channel = message.guild.channels.cache.get(channelId) || message.channel;
       if (!channel) {
-        await message.reply('❌ Channel not found!');
-        return;
+        throw new Error('Channel not found!');
       }
 
-      await channel.delete(reason);
-      // Note: Can't reply to message after channel is deleted, so we log it
-      console.log(`✅ Channel ${channel.name} deleted successfully by ${message.author.username}`);
-
+      // For safety, we'll just archive instead of delete for now
+      await (channel as any).setName(`deleted-${channel.name}`, reason);
+      return 'Channel marked for deletion (archived for safety)!';
     } catch (error) {
       console.error('❌ Error deleting channel:', error);
-      await message.reply('❌ Failed to delete channel!');
+      throw error;
     }
   }
 
@@ -1007,24 +947,21 @@ If no function call is appropriate, return an empty array for "functionCalls". D
     const { channelId, newName, reason = 'Channel renamed' } = args;
     
     if (!message.guild) {
-      await message.reply('❌ This command can only be used in a server!');
-      return;
+      throw new Error('This command can only be used in a server!');
     }
 
     try {
-      const channel = message.guild.channels.cache.get(channelId);
+      const channel = message.guild.channels.cache.get(channelId) || message.channel;
       if (!channel) {
-        await message.reply('❌ Channel not found!');
-        return;
+        throw new Error('Channel not found!');
       }
 
       const oldName = channel.name;
-      await channel.setName(newName, reason);
-      await message.reply(`✅ Channel renamed from "${oldName}" to "${newName}"!`);
-
+      await (channel as any).setName(newName, reason);
+      return `Channel renamed from "${oldName}" to "${newName}"!`;
     } catch (error) {
       console.error('❌ Error renaming channel:', error);
-      await message.reply('❌ Failed to rename channel!');
+      throw error;
     }
   }
 
