@@ -11,10 +11,13 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ComponentType,
-  Partials
+  Partials,
+  GuildBasedChannel,
+  TextChannel,
+  VoiceChannel
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType } from '@google/generative-ai';
+import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType, Part } from '@google/generative-ai';
 
 // Types
 export interface BotConfig {

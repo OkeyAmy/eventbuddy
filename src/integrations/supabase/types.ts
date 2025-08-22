@@ -261,6 +261,7 @@ export type Database = {
           guild_id: string
           host_discord_id: string
           id: string
+          others: Json | null
           post_event_channel_id: string | null
           status: string | null
           total_attendees: number | null
@@ -276,6 +277,7 @@ export type Database = {
           guild_id: string
           host_discord_id: string
           id?: string
+          others?: Json | null
           post_event_channel_id?: string | null
           status?: string | null
           total_attendees?: number | null
@@ -291,6 +293,7 @@ export type Database = {
           guild_id?: string
           host_discord_id?: string
           id?: string
+          others?: Json | null
           post_event_channel_id?: string | null
           status?: string | null
           total_attendees?: number | null
