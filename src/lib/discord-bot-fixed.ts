@@ -448,7 +448,14 @@ Context: This is a Discord server where you help with event management. Always b
 
       const contents: Content[] = [
         { role: 'user', parts: [{ text: systemPrompt }] },
-        ...history
+        ...history.map(h => ({
+          role: h.role,
+          parts: h.parts.filter(p => p.text || p.functionCall || p.functionResponse).map(p => ({
+            text: p.text,
+            functionCall: p.functionCall,
+            functionResponse: p.functionResponse
+          }))
+        })) as Content[]
       ];
 
       console.log(`🧠 Generating AI response with ${this.functionDeclarations.length} available functions`);
@@ -467,8 +474,8 @@ Context: This is a Discord server where you help with event management. Always b
           parts: [{ functionCall: response.functionCalls[0] }]
         });
 
-        // Execute each function call
-        for (const functionCall of response.functionCalls) {
+        // Execute each function call  
+        for (const functionCall of (response.functionCalls || [])) {
           console.log(`🔧 Calling function: ${functionCall.name}`, functionCall.args);
           
           try {
@@ -503,7 +510,14 @@ Context: This is a Discord server where you help with event management. Always b
         // Generate final response incorporating function results
         const finalContents: Content[] = [
           { role: 'user', parts: [{ text: systemPrompt }] },
-          ...history
+          ...history.map(h => ({
+            role: h.role,
+            parts: h.parts.filter(p => p.text || p.functionCall || p.functionResponse).map(p => ({
+              text: p.text,
+              functionCall: p.functionCall,
+              functionResponse: p.functionResponse
+            }))
+          })) as Content[]
         ];
 
         result = await model.generateContent({ contents: finalContents });
@@ -959,7 +973,8 @@ Context: This is a Discord server where you help with event management. Always b
       }
 
       // Move to archived category or add archived prefix
-      await (channel as any).setName(`archived-${channel.name}`, reason);
+      const channelName = 'name' in channel ? channel.name : 'unknown-channel';
+      await (channel as any).setName(`archived-${channelName}`, reason);
       return 'Channel archived successfully!';
     } catch (error) {
       console.error('❌ Error archiving channel:', error);
@@ -981,7 +996,8 @@ Context: This is a Discord server where you help with event management. Always b
       }
 
       // For safety, we'll just archive instead of delete for now
-      await (channel as any).setName(`deleted-${channel.name}`, reason);
+      const channelName = 'name' in channel ? channel.name : 'unknown-channel';
+      await (channel as any).setName(`deleted-${channelName}`, reason);
       return 'Channel marked for deletion (archived for safety)!';
     } catch (error) {
       console.error('❌ Error deleting channel:', error);
@@ -1002,7 +1018,7 @@ Context: This is a Discord server where you help with event management. Always b
         throw new Error('Channel not found!');
       }
 
-      const oldName = channel.name;
+      const oldName = 'name' in channel ? channel.name : 'unknown-channel';
       await (channel as any).setName(newName, reason);
       return `Channel renamed from "${oldName}" to "${newName}"!`;
     } catch (error) {
