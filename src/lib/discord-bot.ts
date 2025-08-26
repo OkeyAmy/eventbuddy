@@ -15,6 +15,7 @@ import {
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType } from '@google/generative-ai';
+import { DISCORD_BOT_PROMPTS } from '../prompts/discord-bot-prompts';
 
 // Types
 export interface BotConfig {
@@ -74,6 +75,13 @@ export class EventBuddyBot {
   private isReady = false;
   private serverUrl: string;
   private conversationMemory: Map<string, ConversationHistory[]> = new Map();
+  private guildOwners: Map<string, string> = new Map(); // guildId -> ownerId
+
+  // Helper method to check if user is server owner
+  private isServerOwner(userId: string, guildId: string | null): boolean {
+    if (!guildId) return false;
+    return this.guildOwners.get(guildId) === userId;
+  }
 
   // Function declarations for Gemini
   private functionDeclarations: FunctionDeclaration[] = [
@@ -206,6 +214,29 @@ export class EventBuddyBot {
         },
         required: []
       }
+    },
+    {
+      name: 'get_active_events',
+      description: 'Get active events for the current user automatically',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          userId: { type: SchemaType.STRING, description: 'Discord user ID' }
+        },
+        required: []
+      }
+    },
+    {
+      name: 'create_text_channel',
+      description: 'Create a new text channel for the user',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          channelName: { type: SchemaType.STRING, description: 'Name of the text channel to create' },
+          purpose: { type: SchemaType.STRING, description: 'Purpose/description of the channel' }
+        },
+        required: ['channelName']
+      }
     }
   ];
 
@@ -244,7 +275,20 @@ export class EventBuddyBot {
     this.client.once('ready', () => {
       console.log(`✅ EventBuddy is online as ${this.client.user?.tag}!`);
       console.log(`🌐 Connected to ${this.client.guilds.cache.size} servers`);
+      
+      // Store guild owners
+      this.client.guilds.cache.forEach(guild => {
+        this.guildOwners.set(guild.id, guild.ownerId);
+        console.log(`👑 Stored owner ${guild.ownerId} for guild ${guild.name}`);
+      });
+      
       this.isReady = true;
+    });
+
+    // Handle guild join to store owner
+    this.client.on('guildCreate', (guild) => {
+      this.guildOwners.set(guild.id, guild.ownerId);
+      console.log(`👑 Bot joined guild ${guild.name}, owner: ${guild.ownerId}`);
     });
 
     this.client.on('interactionCreate', async (interaction) => {
@@ -367,6 +411,15 @@ export class EventBuddyBot {
     const { commandName } = interaction;
 
     try {
+      // Check if user is server owner (except for help command)
+      if (commandName !== 'help' && !this.isServerOwner(interaction.user.id, interaction.guildId)) {
+        await interaction.reply({ 
+          content: DISCORD_BOT_PROMPTS.PERMISSION_DENIED, 
+          ephemeral: true 
+        });
+        return;
+      }
+
       // Always acknowledge the interaction first
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferReply({ ephemeral: commandName !== 'help' });
@@ -448,20 +501,18 @@ export class EventBuddyBot {
         tools: [{ functionDeclarations: this.functionDeclarations }]
       });
 
-      // Build conversation context
-      const systemPrompt = `You are EventBuddy, a friendly Discord bot that helps manage events and servers. 
+      // Build conversation context with user context
+      const isOwner = this.isServerOwner(message.author.id, message.guildId);
+      const systemPrompt = `${DISCORD_BOT_PROMPTS.SYSTEM_PROMPT}
 
-You can:
-- Create and manage events
-- Create, archive, delete, and rename channels
-- Provide analytics and insights
-- Engage in natural conversation
-
-Current user: @${message.author.username}
+Current user: @${message.author.username} ${isOwner ? '(Server Owner)' : '(Regular User)'}
 Channel: ${message.channelId}
 Guild: ${message.guildId}
+User ID: ${message.author.id}
 
-Context: This is a Discord server where you help with event management. Always be helpful and friendly.`;
+Available functions: get_active_events, create_text_channel, create_event, end_event, get_event_analytics, and channel management.
+When users ask about active events, use get_active_events function automatically.
+When users want to create channels, use create_text_channel function directly.`;
 
       // Add user message to history
       history.push({
@@ -503,10 +554,7 @@ Context: This is a Discord server where you help with event management. Always b
         });
 
         // Execute each function call  
-        const functionCalls = typeof response.functionCalls === 'function' 
-          ? response.functionCalls() 
-          : (response.functionCalls || []);
-        for (const functionCall of functionCalls) {
+        for (const functionCall of (Array.isArray(response.functionCalls) ? response.functionCalls : [])) {
           console.log(`🔧 Calling function: ${functionCall.name}`, functionCall.args);
           
           try {
@@ -608,6 +656,10 @@ Context: This is a Discord server where you help with event management. Always b
         return await this.renameChannel(message, args);
       case 'get_event_analytics':
         return await this.getEventAnalytics(message, args);
+      case 'get_active_events':
+        return await this.getActiveEvents(message, args);
+      case 'create_text_channel':
+        return await this.createTextChannel(message, args);
       default:
         throw new Error(`Unknown function: ${functionName}`);
     }
@@ -843,30 +895,10 @@ Context: This is a Discord server where you help with event management. Always b
   }
 
   private async handleHelp(interaction: ChatInputCommandInteraction) {
-    const helpEmbed = new EmbedBuilder()
-      .setTitle('🤖 EventBuddy Commands')
-      .setDescription('AI-powered Discord event management with natural language support')
-      .addFields(
-        { 
-          name: '🎯 Event Commands', 
-          value: '`/create_event` - Create a new event\n`/end_event` - End current event\n`/analytics` - View event metrics',
-          inline: false 
-        },
-        { 
-          name: '💬 AI Chat', 
-          value: '`/input <message>` - Chat with AI\n**Or just type naturally!** I understand:\n• "Hello" - Greetings\n• "Create an event for tomorrow" - Event management\n• "Make a channel for discussion" - Channel management',
-          inline: false 
-        },
-        {
-          name: '✨ Natural Language Examples',
-          value: '• "Create a channel called meeting-room"\n• "Archive the old-discussion channel"\n• "Show me event analytics"\n• "End the current event"',
-          inline: false
-        }
-      )
-      .setColor(0x5865F2);
-
-    await this.editOrReply(interaction, '');
-    await interaction.followUp({ embeds: [helpEmbed] });
+    const isOwner = this.isServerOwner(interaction.user.id, interaction.guildId);
+    const helpContent = isOwner ? DISCORD_BOT_PROMPTS.OWNER_HELP : DISCORD_BOT_PROMPTS.USER_HELP;
+    
+    await this.editOrReply(interaction, helpContent);
   }
 
   private async handleInputCommand(interaction: ChatInputCommandInteraction) {
@@ -1186,6 +1218,58 @@ Context: This is a Discord server where you help with event management. Always b
       });
     } catch (error) {
       console.error('Error storing event channel:', error);
+    }
+  }
+
+  // New function implementations for AI
+  private async getActiveEvents(message: Message, args: any) {
+    try {
+      const { data: events } = await this.supabase
+        .from('events')
+        .select('*')
+        .eq('host_discord_id', message.author.id)
+        .eq('guild_id', message.guildId)
+        .eq('status', 'active');
+
+      if (!events || events.length === 0) {
+        return DISCORD_BOT_PROMPTS.NO_ACTIVE_EVENTS;
+      }
+
+      return DISCORD_BOT_PROMPTS.ACTIVE_EVENTS_FOUND(events);
+    } catch (error) {
+      console.error('❌ Error getting active events:', error);
+      return DISCORD_BOT_PROMPTS.ERROR_DATABASE;
+    }
+  }
+
+  private async createTextChannel(message: Message, args: any) {
+    const { channelName, purpose } = args;
+    
+    if (!message.guild) {
+      throw new Error('This command can only be used in a server!');
+    }
+
+    try {
+      const channel = await message.guild.channels.create({
+        name: channelName,
+        type: 0, // Text channel
+        reason: `Text channel created by ${message.author.username}${purpose ? ` for ${purpose}` : ''}`
+      });
+      
+      // Send welcome message to the new channel
+      const textChannel = channel as any;
+      await textChannel.send(`🎉 Welcome to #${channelName}! This channel was created by <@${message.author.id}>${purpose ? ` for ${purpose}` : ''}. I'll be here to help with any questions!`);
+      
+      // Set up auto-engagement for this channel
+      this.setupChannelEngagement(textChannel.id, purpose || 'general');
+
+      // Store channel info in database
+      await this.storeEventChannel(purpose || 'general', channel.id, channelName, 'text');
+
+      return DISCORD_BOT_PROMPTS.CHANNEL_CREATED(channelName, purpose);
+    } catch (error) {
+      console.error('❌ Error creating text channel:', error);
+      return DISCORD_BOT_PROMPTS.ERROR_CHANNEL_CREATE;
     }
   }
 
