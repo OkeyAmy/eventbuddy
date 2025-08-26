@@ -407,6 +407,37 @@ export class EventBuddyBot {
 
       console.log(`💬 Processing message: "${message.content}" from ${message.author.username} in ${message.guild?.name || 'DM'}`);
 
+      // Simple pattern detection for channel creation
+      const channelCreatePattern = /create\s+(?:a\s+)?(?:channel|text\s+channel|voice\s+channel)\s+(?:and\s+call\s+it\s+)?#?([a-zA-Z0-9-_]+)/i;
+      const match = message.content.match(channelCreatePattern);
+      
+      if (match) {
+        const channelName = match[1];
+        console.log(`🎯 Detected channel creation request for: ${channelName}`);
+        
+        try {
+          // Check bot permissions first
+          if (!message.guild?.members.me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            await message.reply('❌ I don\'t have permission to create channels! I need the "Manage Channels" permission.');
+            return;
+          }
+          
+          // Create the channel
+          const result = await this.createEventChannel(message, { 
+            channelName, 
+            channelType: 'text',
+            eventId: 'general'
+          });
+          
+          await message.reply(result);
+          return;
+        } catch (error) {
+          console.error('❌ Error creating channel from pattern detection:', error);
+          await message.reply(`❌ Failed to create channel: ${error.message}`);
+          return;
+        }
+      }
+
       // Get conversation history for context
       const conversationKey = `${message.channelId}_${message.author.id}`;
       let history = this.conversationMemory.get(conversationKey) || [];
@@ -639,6 +670,26 @@ Context: This is a Discord server where you help with event management. Always b
         ephemeral: true 
       });
     }
+  }
+
+  private async checkBotPermissions(message: Message, requiredPermissions: bigint[]): Promise<boolean> {
+    if (!message.guild) {
+      return false;
+    }
+
+    const botMember = message.guild.members.me;
+    if (!botMember) {
+      return false;
+    }
+
+    // Check if bot has all required permissions
+    for (const permission of requiredPermissions) {
+      if (!botMember.permissions.has(permission)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private async checkAdminPermission(userId: string, guildId: string): Promise<boolean> {
@@ -932,16 +983,49 @@ Context: This is a Discord server where you help with event management. Always b
       throw new Error('This command can only be used in a server!');
     }
 
+    // Check if the bot has permission to create channels
+    const botMember = message.guild.members.me;
+    if (!botMember) {
+      throw new Error('Bot member not found in guild!');
+    }
+
+    // Check bot permissions for creating channels
+    if (!botMember.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      throw new Error('❌ I don\'t have permission to create channels! I need the "Manage Channels" permission.');
+    }
+
     try {
-      const channel = await message.guild.channels.create({
+      // Create the channel with proper type handling
+      const channelOptions: any = {
         name: channelName,
-        type: channelType === 'voice' ? 2 : 0, // 0 = text, 2 = voice
-        parent: null, // You can set a category ID here
         reason: `Event channel created for event ${eventId || 'general'}`
-      });
+      };
+
+      // Set channel type based on Discord.js v14 ChannelType enum
+      if (channelType === 'voice') {
+        channelOptions.type = ChannelType.GuildVoice;
+      } else {
+        channelOptions.type = ChannelType.GuildText;
+      }
+
+      // Add permission overwrites if it's a private channel
+      if (isPrivate) {
+        channelOptions.permissionOverwrites = [
+          {
+            id: message.guild.id, // @everyone role
+            deny: [PermissionFlagsBits.ViewChannel]
+          },
+          {
+            id: message.author.id, // Channel creator
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
+          }
+        ];
+      }
+
+      const channel = await message.guild.channels.create(channelOptions);
       
       // Send welcome message to the new channel
-      if (channel.type === 0) { // text channel
+      if (channel.type === ChannelType.GuildText) {
         const textChannel = channel as any;
         await textChannel.send(`🎉 Welcome to ${channelName}! This channel was created for event management. I'll be here to help with any questions!`);
         
@@ -952,9 +1036,19 @@ Context: This is a Discord server where you help with event management. Always b
       // Store channel info in database
       await this.storeEventChannel(eventId || 'general', channel.id, channelName, channelType);
 
-      return `Channel "${channelName}" created successfully!`;
+      return `✅ Channel "#${channelName}" created successfully!`;
     } catch (error) {
       console.error('❌ Error creating channel:', error);
+      
+      // Provide more specific error messages
+      if (error.message?.includes('Missing Permissions')) {
+        throw new Error('❌ I don\'t have permission to create channels in this server. Please ask an administrator to give me the "Manage Channels" permission.');
+      } else if (error.message?.includes('Maximum number of channels reached')) {
+        throw new Error('❌ This server has reached the maximum number of channels allowed.');
+      } else if (error.message?.includes('Invalid channel name')) {
+        throw new Error('❌ Invalid channel name. Channel names must be 1-100 characters and cannot contain certain special characters.');
+      }
+      
       throw error;
     }
   }
