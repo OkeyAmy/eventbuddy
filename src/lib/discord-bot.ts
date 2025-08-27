@@ -82,7 +82,7 @@ export class EventBuddyBot {
           eventTime: { type: 'string', description: 'Event time (HH:MM)' },
           description: { type: 'string', description: 'Event description' }
         },
-        required: ['eventName']
+        required: ['eventName', 'eventDate', 'eventTime', 'description']
       }
     },
     {
