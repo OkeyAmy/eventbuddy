@@ -4,17 +4,11 @@ import {
   SlashCommandBuilder, 
   ChatInputCommandInteraction,
   Message,
-  ChannelType,
-  PermissionFlagsBits,
   EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ComponentType,
   Partials
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType } from '@google/generative-ai';
+import { GoogleGenerativeAI, Content, FunctionDeclaration} from '@google/generative-ai';
 
 // Types
 export interface BotConfig {
@@ -301,23 +295,23 @@ export class EventBuddyBot {
         )
     ];
 
+    // TODO - REFACTOR THIS REGISTER ALL GUILDS BEFORE PUSHING TO PROD
     this.client.once('ready', async () => {
       try {
+        const payload = commands.map(c => c.toJSON ? c.toJSON() : c);
         const devGuildId = process.env.DEV_GUILD_ID;
         if (devGuildId) {
-          console.log(`🔄 Registering GUILD commands for ${devGuildId}`);
           const guild = await this.client.guilds.fetch(devGuildId);
-          await guild.commands.set(commands);
-          console.log('✅ Guild slash commands registered successfully!');
+          await guild.commands.set(payload);
+          console.log(`✅ Registered commands to development guild ${guild.name}`);
         } else {
-          console.log('🔄 Registering GLOBAL commands');
-          await this.client.application?.commands.set(commands);
-          console.log('✅ Global slash commands registered successfully!');
+          await this.client.application?.commands.set(payload);
         }
-      } catch (error) {
-        console.error('❌ Error registering commands:', error);
+      } catch (err) {
+        console.error('Error registering commands', err);
       }
     });
+
   }
 
   private async handleSlashCommand(interaction: ChatInputCommandInteraction) {
