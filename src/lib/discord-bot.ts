@@ -648,17 +648,54 @@ Context: This is a Discord server where you help with event management. Always b
   }
 
   private async handleCreateEvent(interaction: ChatInputCommandInteraction) {
-    const eventName = interaction.options.getString('name')!;
-    const eventDate = interaction.options.getString('date');
-    const eventTime = interaction.options.getString('time');
+    const name = interaction.options.getString('name')?.trim() ?? '';
+    const dateStr = interaction.options.getString('date')?.trim() ?? '';
+    const timeStr = interaction.options.getString('time')?.trim() ?? null; // optional
+
+    // Basic presence checks
+    if (!name) return this.editOrReply(interaction, '❌ `name` is required.');
+    if (!dateStr) return this.editOrReply(interaction, '❌ `date` is required.');
+    if (!interaction.guildId) return this.editOrReply(interaction, '❌ This command must be used in a server.');
+
+    // Validate formats
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/; // YYYY-MM-DD
+    if (!dateRegex.test(dateStr)) return this.editOrReply(interaction, '❌ `date` must be in YYYY-MM-DD format.');
+
+    if (timeStr) {
+      const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/; // HH:mm 24-hour
+      if (!timeRegex.test(timeStr)) return this.editOrReply(interaction, '❌ `time` must be in HH:mm (24-hour) format.');
+    }
+
+    // Build Date objects and validate future-ness
+    const now = new Date();
 
     try {
+      if (timeStr) {
+        // Combine date + time -> local Date
+        const eventDateTime = new Date(`${dateStr}T${timeStr}:00`);
+        if (isNaN(eventDateTime.getTime())) return this.editOrReply(interaction, '❌ Invalid date/time combination.');
+
+        if (eventDateTime.getTime() <= now.getTime()) {
+          return this.editOrReply(interaction, '❌ Event datetime must be in the future.');
+        }
+      } else {
+        // No time provided: require date > today (strictly after)
+        const eventDateOnly = new Date(`${dateStr}T00:00:00`);
+        if (isNaN(eventDateOnly.getTime())) return this.editOrReply(interaction, '❌ Invalid date.');
+
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // today 00:00 local
+        if (eventDateOnly.getTime() <= todayStart.getTime()) {
+          return this.editOrReply(interaction, '❌ Event date must be after today.');
+        }
+      }
+
+      // Insert into DB
       const { data: eventData, error } = await this.supabase
         .from('events')
         .insert({
-          event_name: eventName,
-          event_date: eventDate,
-          event_time: eventTime,
+          event_name: name,
+          event_date: dateStr,
+          event_time: timeStr,
           host_discord_id: interaction.user.id,
           guild_id: interaction.guildId,
           status: 'active'
@@ -668,12 +705,14 @@ Context: This is a Discord server where you help with event management. Always b
 
       if (error) throw error;
 
-      await this.editOrReply(interaction, `✅ Event "${eventName}" created successfully!`);
-    } catch (error) {
-      console.error('❌ Error creating event:', error);
+      await this.editOrReply(interaction, `✅ Event "${name}" created successfully!`);
+    } catch (err) {
+      console.error('❌ Error creating event:', err);
       await this.editOrReply(interaction, '❌ Error creating event. Please try again.');
     }
   }
+
+  
 
   private async handleEndEvent(interaction: ChatInputCommandInteraction) {
     try {
