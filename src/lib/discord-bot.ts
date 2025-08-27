@@ -71,6 +71,7 @@ export class EventBuddyBot {
 
   // Function declarations for Gemini
   private functionDeclarations: FunctionDeclaration[] = [
+    //i dont think the slash commands are using these?
     {
       name: 'create_event',
       description: 'Create a new event with specified details',
@@ -286,12 +287,12 @@ export class EventBuddyBot {
         .addStringOption(option =>
           option.setName('date')
             .setDescription('Event date (YYYY-MM-DD)')
-            .setRequired(false)
+            .setRequired(true)
         )
         .addStringOption(option =>
           option.setName('time')
             .setDescription('Event time (HH:MM)')
-            .setRequired(false)
+            .setRequired(true)
         )
     ];
 
