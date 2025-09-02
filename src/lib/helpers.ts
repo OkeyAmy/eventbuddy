@@ -283,7 +283,7 @@ export async function handleCalendarButton(
   }
 }
 
-export async function isDateInFuture(dateStr?: string | null, timeStr?: string | null): boolean {
+export async function isDateInFuture(dateStr?: string | null, timeStr?: string | null): Promise<boolean> {
   if (!dateStr) return true; // no date provided → allow
   const now = new Date();
 
