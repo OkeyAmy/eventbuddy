@@ -1,7 +1,10 @@
 
 import { NextApiRequest, NextApiResponse } from 'next';
 import BotManager from '@/lib/bot-manager';
-import { BotConfig } from '@/lib/discord-bot';
+// Keep original import commented for traceability during testing
+// import { BotConfig } from '@/lib/discord-bot';
+// Using fixed bot implementation while validating changes
+import { BotConfig } from '@/lib/discord-bot-fixed';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Add CORS headers

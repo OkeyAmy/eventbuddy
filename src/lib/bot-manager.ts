@@ -1,4 +1,7 @@
-import { EventBuddyBot, type BotConfig } from './discord-bot';
+// NOTE: original import kept but commented out for traceability
+// import { EventBuddyBot, type BotConfig } from './discord-bot';
+// Switched to fixed implementation for testing/debugging — do not remove the old import yet
+import { EventBuddyBot, type BotConfig } from './discord-bot-fixed';
 
 class BotManager {
   private static instance: BotManager;

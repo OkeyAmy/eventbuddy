@@ -125,9 +125,15 @@ If you prefer manual setup:
    ```
    Name: eventbuddy-backend
    Environment: Node
-   Build Command: pnpm install && pnpm exec next build
+   Branch: main
+   Plan: Free (or choose desired plan)
+   Build Command: pnpm install --frozen-lockfile && pnpm exec next build --output standalone
    Start Command: pnpm exec next start
    ```
+   Notes:
+   - Use `--frozen-lockfile` to ensure deterministic installs on Render.
+   - `--output standalone` creates a self-contained Next.js server build which works well on Render.
+   - If you use `npm` instead of `pnpm` on Render, change commands to `npm ci` and `npm run build`/`npm run start`.
 
 5. **Set Environment Variables**:
    - Scroll to **"Environment Variables"**
@@ -143,14 +149,85 @@ If you prefer manual setup:
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_key
    GEMINI_API_KEY=your_gemini_api_key
    NEXT_PUBLIC_APP_URL=https://your-frontend-url.com
+   BOT_ADMIN_TOKEN=some-long-random-string
    ```
 
    **Note**: Replace `your-backend` with your actual Render app name!
+
+### Generating a secure `BOT_ADMIN_TOKEN`
+
+You should generate a long, random token and store it securely in Render (set as an environment variable). Below are simple commands you can run locally to create a token.
+
+- Linux / macOS (bash):
+
+```bash
+# generates a 64-character hex token
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# or using openssl
+openssl rand -hex 32
+```
+
+- Windows (PowerShell):
+
+```powershell
+# using Node (recommended if Node is installed)
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Examples to set it locally for testing:
+
+- macOS / Linux:
+```bash
+export BOT_ADMIN_TOKEN=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+```
+
+- PowerShell (Windows):
+```powershell
+$env:BOT_ADMIN_TOKEN = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+How to add to Render:
+- In your Render service dashboard → **Environment** → **Add Environment Variable**:
+  - **Key**: `BOT_ADMIN_TOKEN`
+  - **Value**: the token you generated
+  - Mark it **Private/Secret** in Render so it is not exposed in builds/logs.
+
+Security notes:
+- Keep this token secret — treat it like a password. Do not commit it to source control.
+- Rotate the token periodically and update Render and any automation that uses it.
 
 6. **Deploy**:
    - Click **"Create Web Service"**
    - Wait for deployment (usually 5-10 minutes)
    - You'll get a URL like `https://your-backend.onrender.com`
+
+7. **Secure and Auto-start the Bot (recommended)**
+
+- By default the start/stop endpoints are unauthenticated. Set `BOT_ADMIN_TOKEN` in Render environment variables (a long random string) and use it to protect admin endpoints.
+
+- Example: secure header when calling start/stop endpoints:
+
+   ```bash
+   # Start bot (curl)
+   curl -X POST https://your-backend.onrender.com/api/bot/start -H "x-bot-admin: $BOT_ADMIN_TOKEN"
+
+   # Stop bot (curl)
+   curl -X POST https://your-backend.onrender.com/api/bot/stop -H "x-bot-admin: $BOT_ADMIN_TOKEN"
+
+   # Check status (no auth usually required but you can require it as well):
+   curl https://your-backend.onrender.com/api/bot/status
+   ```
+
+- Example Render Cron Job (every 5 minutes) that calls the secured start endpoint and ignores failures:
+
+   ```bash
+   curl -s -X POST https://your-backend.onrender.com/api/bot/start -H "x-bot-admin: $BOT_ADMIN_TOKEN" >/dev/null 2>&1 || true
+   ```
+
+Notes on auto-starting:
+- A Cron Job on Render or an external uptime monitor is the simplest approach to ensure the bot is running after deploys or restarts.
+- If you prefer to auto-start as part of the process launch, see the advanced single-process wrapper below, but prefer Cron for clarity and reliability.
 
 ## 🌐 Step 4: Deploy Frontend (Vite)
 
