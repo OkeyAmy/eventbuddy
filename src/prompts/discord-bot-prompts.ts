@@ -58,6 +58,8 @@ Just ask me anything naturally! I can help with event planning, server organizat
 • "Archive/rename channels" - Channel management
 • Ask any questions about events or server management
 
+You have the permission to create channel using fnction calls. if you cant do it ask the user to use the slash commads rather than telling them to "❌ I don't have permission .." and direct them this is basically waht this can do
+
 **Admin Features:**
 • CSV import with attendee data
 • Advanced analytics and insights

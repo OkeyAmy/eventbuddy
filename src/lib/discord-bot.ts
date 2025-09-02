@@ -5,10 +5,13 @@ import {
   ChatInputCommandInteraction,
   Message,
   EmbedBuilder,
-  Partials
+  Partials,
+  PermissionFlagsBits,
+  ChannelType
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI, Content, FunctionDeclaration} from '@google/generative-ai';
+import { DISCORD_BOT_PROMPTS } from '@/prompts/discord-bot-prompts';
+import { GoogleGenerativeAI, Content, FunctionDeclaration, SchemaType} from '@google/generative-ai';
 
 // Types
 export interface BotConfig {
@@ -232,6 +235,30 @@ export class EventBuddyBot {
         required: ['channelName']
       }
     }
+    ,
+    {
+      name: 'list_channels',
+      description: 'List text channels available in the current guild',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          limit: { type: SchemaType.STRING, description: 'Maximum number of channels to list (optional)' }
+        },
+        required: []
+      }
+    },
+    {
+      name: 'read_channel',
+      description: 'Read recent messages from a specified channel',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          channelName: { type: SchemaType.STRING, description: 'Name of the channel to read' },
+          limit: { type: SchemaType.STRING, description: 'Number of recent messages to fetch (optional)' }
+        },
+        required: ['channelName']
+      }
+    }
   ];
 
   constructor(config: BotConfig) {
@@ -312,6 +339,36 @@ export class EventBuddyBot {
       if (message.author.bot) return;
       
       console.log(`💬 Message received: "${message.content}" from ${message.author.username}`);
+      // Allow natural conversation flow: check for "list channels" or "read channel" patterns first
+      const listChannelsPattern = /\b(list|show)\s+channels\b/i;
+      const readChannelPattern = /\b(read|show)\s+(?:the\s+)?channel\s+(?:#)?([a-zA-Z0-9-_]+)\b/i;
+
+      if (listChannelsPattern.test(message.content)) {
+        try {
+          const result = await this.listChannels(message, {});
+          await message.reply(result);
+          return;
+        } catch (err) {
+          console.error('❌ Error listing channels:', err);
+          await message.reply('❌ Failed to list channels.');
+          return;
+        }
+      }
+
+      const readMatch = message.content.match(readChannelPattern);
+      if (readMatch) {
+        const channelName = readMatch[2];
+        try {
+          const result = await this.readChannel(message, { channelName, limit: 5 });
+          await message.reply(result);
+          return;
+        } catch (err) {
+          console.error('❌ Error reading channel:', err);
+          await message.reply('❌ Failed to read that channel.');
+          return;
+        }
+      }
+
       await this.handleNaturalLanguageMessage(message);
     });
 
@@ -654,6 +711,10 @@ When users want to create channels, use create_text_channel function directly.`;
         return await this.getActiveEvents(message, args);
       case 'create_text_channel':
         return await this.createTextChannel(message, args);
+      case 'list_channels':
+        return await this.listChannels(message, args);
+      case 'read_channel':
+        return await this.readChannel(message, args);
       default:
         throw new Error(`Unknown function: ${functionName}`);
     }
@@ -1319,6 +1380,58 @@ When users want to create channels, use create_text_channel function directly.`;
       });
     } catch (error) {
       console.error('❌ Error storing conversation:', error);
+    }
+  }
+
+  // New helper: listChannels
+  private async listChannels(message: Message, args: any) {
+    if (!message.guild) {
+      return '❌ This command can only be used inside a server.';
+    }
+
+    try {
+      const channels = Array.from(message.guild.channels.cache.values())
+        .filter((c: any) => c.type === ChannelType.GuildText)
+        .map((c: any) => ({ id: c.id, name: c.name || String(c.id) }));
+
+      if (!channels || channels.length === 0) return '📭 No text channels found.';
+
+      const limit = args?.limit ? parseInt(args.limit, 10) : 25;
+      const sliced = channels.slice(0, limit);
+
+      const list = sliced.map(ch => `• #${ch.name} (id: ${ch.id})`).join('\n');
+      return `📚 Text channels in this server:\n${list}`;
+    } catch (error) {
+      console.error('❌ Error in listChannels:', error);
+      return '❌ Failed to list channels.';
+    }
+  }
+
+  // New helper: readChannel
+  private async readChannel(message: Message, args: any) {
+    if (!message.guild) {
+      throw new Error('This command can only be used in a server!');
+    }
+
+    const channelName = args?.channelName?.toString().toLowerCase();
+    const limit = args?.limit ? Math.min(parseInt(args.limit, 10), 25) : 5;
+
+    const channel = message.guild.channels.cache.find(c => ('name' in c && (c as any).name.toLowerCase() === channelName) ) as any;
+    if (!channel) {
+      throw new Error('Channel not found in this server.');
+    }
+
+    if (channel.type !== ChannelType.GuildText) {
+      throw new Error('Can only read text channels.');
+    }
+
+    try {
+      const messages = await channel.messages.fetch({ limit });
+      const formatted = messages.map(m => `**${m.author.username}:** ${m.content}`).reverse().join('\n');
+      return `📖 Last ${messages.size} messages from #${channel.name}:\n${formatted}`;
+    } catch (error) {
+      console.error('❌ Error fetching messages:', error);
+      throw new Error('Failed to fetch messages from that channel.');
     }
   }
 
