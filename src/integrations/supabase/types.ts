@@ -108,6 +108,93 @@ export type Database = {
           },
         ]
       }
+      channel_metadata: {
+        Row: {
+          ai_personality_context: Json | null
+          channel_id: string
+          channel_name: string
+          channel_purpose: string | null
+          created_at: string
+          created_by: string
+          guild_id: string
+          id: string
+          last_activity: string | null
+          message_count: number | null
+          updated_at: string
+        }
+        Insert: {
+          ai_personality_context?: Json | null
+          channel_id: string
+          channel_name: string
+          channel_purpose?: string | null
+          created_at?: string
+          created_by: string
+          guild_id: string
+          id?: string
+          last_activity?: string | null
+          message_count?: number | null
+          updated_at?: string
+        }
+        Update: {
+          ai_personality_context?: Json | null
+          channel_id?: string
+          channel_name?: string
+          channel_purpose?: string | null
+          created_at?: string
+          created_by?: string
+          guild_id?: string
+          id?: string
+          last_activity?: string | null
+          message_count?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      conversation_history: {
+        Row: {
+          ai_response: string | null
+          channel_id: string
+          context_used: Json | null
+          created_at: string
+          guild_id: string
+          id: string
+          message_content: string | null
+          message_timestamp: string
+          sender_id: string
+          sender_username: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          ai_response?: string | null
+          channel_id: string
+          context_used?: Json | null
+          created_at?: string
+          guild_id: string
+          id?: string
+          message_content?: string | null
+          message_timestamp?: string
+          sender_id: string
+          sender_username?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          ai_response?: string | null
+          channel_id?: string
+          context_used?: Json | null
+          created_at?: string
+          guild_id?: string
+          id?: string
+          message_content?: string | null
+          message_timestamp?: string
+          sender_id?: string
+          sender_username?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           ai_analysis: Json | null
@@ -343,6 +430,45 @@ export type Database = {
         }
         Relationships: []
       }
+      user_channel_preferences: {
+        Row: {
+          channel_id: string
+          created_at: string
+          guild_id: string
+          id: string
+          is_active: boolean | null
+          preference_description: string | null
+          preference_type: string
+          preference_value: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string
+          guild_id: string
+          id?: string
+          is_active?: boolean | null
+          preference_description?: string | null
+          preference_type: string
+          preference_value: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string
+          guild_id?: string
+          id?: string
+          is_active?: boolean | null
+          preference_description?: string | null
+          preference_type?: string
+          preference_value?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_temp_emails: {
         Row: {
           created_at: string | null
@@ -402,6 +528,24 @@ export type Database = {
       deactivate_expired_emails: {
         Args: Record<PropertyKey, never>
         Returns: number
+      }
+      get_conversation_context: {
+        Args: { p_channel_id: string; p_limit?: number; p_user_id: string }
+        Returns: {
+          ai_response: string
+          message_content: string
+          message_timestamp: string
+          sender_id: string
+          sender_username: string
+        }[]
+      }
+      get_user_channel_preferences: {
+        Args: { p_channel_id: string; p_user_id: string }
+        Returns: {
+          preference_description: string
+          preference_type: string
+          preference_value: string
+        }[]
       }
     }
     Enums: {

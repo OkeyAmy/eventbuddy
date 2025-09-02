@@ -19,6 +19,7 @@ import {
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType, Part } from '@google/generative-ai';
 import { DISCORD_BOT_PROMPTS } from '../prompts/discord-bot-prompts';
+import { ConversationLogger } from './conversation-logger';
 
 // Types
 export interface BotConfig {
@@ -79,6 +80,7 @@ export class EventBuddyBot {
   private serverUrl: string;
   private conversationMemory: Map<string, ConversationHistory[]> = new Map();
   private guildOwners: Map<string, string> = new Map(); // guildId -> ownerId
+  private conversationLogger: ConversationLogger;
 
   // Helper method to check if user is server owner
   private isServerOwner(userId: string, guildId: string | null): boolean {
@@ -269,6 +271,9 @@ export class EventBuddyBot {
 
     // Initialize Gemini AI
     this.gemini = new GoogleGenerativeAI(config.geminiApiKey);
+
+    // Initialize conversation logger
+    this.conversationLogger = new ConversationLogger(config.supabaseUrl, config.supabaseKey);
 
     this.setupEventHandlers();
     this.setupCommands();
@@ -463,9 +468,29 @@ export class EventBuddyBot {
 
       console.log(`💬 Processing message: "${message.content}" from ${message.author.username} in ${message.guild?.name || 'DM'}`);
 
+      // Log the user message first
+      if (message.guildId) {
+        await this.conversationLogger.updateChannelMetadata({
+          channel_id: message.channelId,
+          guild_id: message.guildId,
+          channel_name: message.channel.isTextBased() ? (message.channel as TextChannel).name || 'Unknown' : 'Unknown',
+          created_by: message.author.id
+        });
+      }
+
       // Get conversation history for context
       const conversationKey = `${message.channelId}_${message.author.id}`;
       let history = this.conversationMemory.get(conversationKey) || [];
+
+      // Build AI context from database
+      let contextFromDB = '';
+      if (message.guildId) {
+        contextFromDB = await this.conversationLogger.buildAIContext(
+          message.author.id,
+          message.channelId,
+          message.guildId
+        );
+      }
 
       // Analyze the message with AI using function calling
       const model = this.gemini.getGenerativeModel({ 
@@ -473,7 +498,7 @@ export class EventBuddyBot {
         tools: [{ functionDeclarations: this.functionDeclarations }]
       });
 
-      // Build conversation context with user context
+      // Build conversation context with user context and database context
       const isOwner = this.isServerOwner(message.author.id, message.guildId);
       const systemPrompt = `${DISCORD_BOT_PROMPTS.SYSTEM_PROMPT}
 
@@ -482,9 +507,13 @@ Channel: ${message.channelId}
 Guild: ${message.guildId}
 User ID: ${message.author.id}
 
+${contextFromDB ? `\nChannel Context and History:\n${contextFromDB}\n` : ''}
+
 Available functions: get_active_events, create_text_channel, create_event, end_event, get_event_analytics, and channel management.
 When users ask about active events, use get_active_events function automatically.
-When users want to create channels, use create_text_channel function directly.`;
+When users want to create channels, use create_text_channel function directly.
+
+Respond naturally based on the channel context and conversation history above. Maintain consistent personality per channel.`;
 
       // Add user message to history
       history.push({
@@ -575,31 +604,51 @@ When users want to create channels, use create_text_channel function directly.`;
         response = result.response;
       }
 
-      // Send the text response
+      // Extract response text and perform simple spam check
       const responseText = response.text();
-      if (responseText && responseText.trim()) {
-        console.log(`📤 Sending response: "${responseText.substring(0, 100)}..."`);
-        
-        // Add AI response to history
+      const isSpam = message.content.length < 3 || 
+                     /^(.)\1{4,}$/.test(message.content) || // Repeated characters
+                     message.content.split(' ').length > 50; // Too long
+
+      // Send response and log it
+      if (responseText && responseText.trim() && !isSpam) {
+        const sentMessage = await message.reply(responseText);
+        console.log(`🤖 AI replied: "${responseText}"`);
+
+        // Log the AI interaction to database
+        if (message.guildId) {
+          await this.conversationLogger.logAIResponse(
+            message.author.id,
+            message.channelId,
+            message.guildId,
+            message.content,
+            message.author.username,
+            responseText,
+            { systemPrompt, contextFromDB }
+          );
+        }
+
+        // Add AI response to memory
         history.push({
           role: 'model',
           parts: [{ text: responseText }]
         });
-
-        // Update conversation memory
-        this.conversationMemory.set(conversationKey, history);
-
-        await message.reply(responseText);
+      } else if (isSpam) {
+        console.log(`🚫 Spam detected, not responding to: "${message.content}"`);
+        
+        // Still log spam messages for learning purposes
+        if (message.guildId) {
+          await this.conversationLogger.logConversation({
+            user_id: message.author.id,
+            channel_id: message.channelId,
+            guild_id: message.guildId,
+            message_content: message.content,
+            sender_id: message.author.id,
+            sender_username: message.author.username,
+            context_used: { spam: true, reason: 'AI detected as spam' }
+          });
+        }
       }
-
-      // Store conversation for analytics
-      await this.storeConversation(message, { 
-        intent: 'general', 
-        confidence: 0.9, 
-        shouldRespond: true, 
-        topic: 'ai_conversation',
-        sentiment: 'neutral'
-      });
 
     } catch (error) {
       console.error('❌ Error handling natural language message:', error);
@@ -619,7 +668,7 @@ When users want to create channels, use create_text_channel function directly.`;
       case 'end_event':
         return await this.endEvent(message, args);
       case 'create_channel':
-        return await this.createEventChannel(message, args);
+        return await this.executeCreateTextChannel(args, message.guildId);
       case 'archive_channel':
         return await this.archiveChannel(message, args);
       case 'delete_channel':
@@ -631,7 +680,7 @@ When users want to create channels, use create_text_channel function directly.`;
       case 'get_active_events':
         return await this.getActiveEvents(message, args);
       case 'create_text_channel':
-        return await this.createTextChannel(message, args);
+        return await this.executeCreateTextChannel(args, message.guildId);
       default:
         throw new Error(`Unknown function: ${functionName}`);
     }
@@ -960,37 +1009,48 @@ When users want to create channels, use create_text_channel function directly.`;
     }
   }
 
-  private async createEventChannel(message: Message, args: any) {
-    const { channelName, eventId, channelType = 'text', isPrivate = false } = args;
-    
-    if (!message.guild) {
-      throw new Error('This command can only be used in a server!');
+  private async executeCreateTextChannel(args: any, guildId?: string | null): Promise<string> {
+    if (!guildId) {
+      return "❌ This command can only be used in a server.";
     }
 
     try {
-      const channel = await message.guild.channels.create({
-        name: channelName,
-        type: channelType === 'voice' ? 2 : 0, // 0 = text, 2 = voice
-        parent: null, // You can set a category ID here
-        reason: `Event channel created for event ${eventId || 'general'}`
-      });
-      
-      // Send welcome message to the new channel
-      if (channel.type === 0) { // text channel
-        const textChannel = channel as any;
-        await textChannel.send(`🎉 Welcome to ${channelName}! This channel was created for event management. I'll be here to help with any questions!`);
-        
-        // Set up auto-engagement for this channel
-        this.setupChannelEngagement(textChannel.id, eventId || 'general');
+      const guild = await this.client.guilds.fetch(guildId);
+      if (!guild) {
+        return "❌ Could not find the server.";
       }
 
-      // Store channel info in database
-      await this.storeEventChannel(eventId || 'general', channel.id, channelName, channelType);
+      const channelName = args.channelName?.toLowerCase().replace(/[^a-z0-9-_]/g, '-') || 'new-channel';
+      const purpose = args.purpose || '';
 
-      return `Channel "${channelName}" created successfully!`;
+      // Check if channel already exists
+      const existingChannel = guild.channels.cache.find(channel => 
+        channel.name === channelName && channel.type === ChannelType.GuildText
+      );
+
+      if (existingChannel) {
+        return `❌ A channel named "${channelName}" already exists.`;
+      }
+
+      const channel = await guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildText,
+        reason: purpose ? `Created by AI: ${purpose}` : 'Created by AI'
+      });
+
+      // Update channel metadata in database
+      await this.conversationLogger.updateChannelMetadata({
+        channel_id: channel.id,
+        guild_id: guildId,
+        channel_name: channelName,
+        channel_purpose: purpose,
+        created_by: 'AI'
+      });
+
+      return DISCORD_BOT_PROMPTS.CHANNEL_CREATED(channelName, purpose);
     } catch (error) {
-      console.error('❌ Error creating channel:', error);
-      throw error;
+      console.error('❌ Error creating text channel:', error);
+      return DISCORD_BOT_PROMPTS.ERROR_CHANNEL_CREATE;
     }
   }
 
