@@ -419,8 +419,11 @@ export class EventBuddyBot {
     const { commandName } = interaction;
 
     try {
+      console.log(`🎯 Admin slash command received: /${commandName} from ${interaction.user.username} (${interaction.user.id})`);
+
       // Check if user is server owner (except for help command)
       if (commandName !== 'help' && !this.isServerOwner(interaction.user.id, interaction.guildId)) {
+        console.log(`🚫 Permission denied for /${commandName} - user ${interaction.user.username} is not server owner`);
         await interaction.reply({ 
           content: DISCORD_BOT_PROMPTS.PERMISSION_DENIED, 
           ephemeral: true 
@@ -428,35 +431,57 @@ export class EventBuddyBot {
         return;
       }
 
-      // Always acknowledge the interaction first
+      console.log(`✅ Admin permission verified for /${commandName}`);
+
+      // Always acknowledge the interaction first (all admin commands are ephemeral)
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferReply({ ephemeral: commandName !== 'help' });
+        console.log(`⏳ Initial ephemeral acknowledgment sent for /${commandName}`);
       }
 
       switch (commandName) {
         case 'import_event':
+          console.log(`📊 Processing import_event command...`);
           await this.handleImportEvent(interaction);
           break;
         case 'end_event':
+          console.log(`🏁 Processing end_event command...`);
           await this.handleEndEvent(interaction);
           break;
         case 'analytics':
+          console.log(`📈 Processing analytics command...`);
           await this.handleAnalytics(interaction);
           break;
         case 'help':
+          console.log(`❓ Processing help command...`);
           await this.handleHelp(interaction);
           break;
         case 'input':
+          console.log(`💬 Processing input command...`);
           await this.handleInputCommand(interaction);
           break;
         case 'create_event':
+          console.log(`🆕 Processing create_event command...`);
           await this.handleCreateEvent(interaction);
           break;
+        case 'channel_privacy_check':
+          console.log(`🔒 Processing channel_privacy_check command...`);
+          await this.handleChannelPrivacyCheck(interaction);
+          break;
         default:
+          console.log(`❌ Unknown command: /${commandName}`);
           await this.editOrReply(interaction, '❌ Unknown command!');
       }
+      
+      console.log(`✅ Successfully processed /${commandName} command`);
     } catch (error) {
-      console.error(`❌ Error handling command ${commandName}:`, error);
+      console.error(`❌ Error handling admin command /${commandName}:`, error);
+      console.error(`🔍 Error details:`, {
+        message: error.message,
+        stack: error.stack,
+        user: interaction.user.username,
+        guild: interaction.guildId
+      });
       await this.editOrReply(interaction, '❌ An error occurred while processing your command.');
     }
   }
