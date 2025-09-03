@@ -1292,4 +1292,135 @@ Current issue: Your bot doesn't have permission to read message content.
     this.client.destroy();
     console.log('🛑 EventBuddy bot stopped.');
   }
+
+  /**
+   * Calculate relevance score based on channel context and message content
+   */
+  private async calculateRelevanceScore(message: Message): Promise<number> {
+    try {
+      if (!message.guildId) return 50; // Default for DMs
+
+      // Get channel metadata
+      const channelMeta = await this.conversationLogger.getChannelMetadata(message.channelId);
+      
+      const messageContent = message.content.toLowerCase();
+      const channelName = message.channel.isTextBased() ? 
+        (message.channel as TextChannel).name?.toLowerCase() || '' : '';
+      
+      let score = 50; // Base score
+
+      // Check for pure spam patterns
+      if (this.isSpamPattern(messageContent)) {
+        return 0;
+      }
+
+      // Check for mentions only
+      if (message.mentions.users.size > 0 && messageContent.replace(/<@!?\d+>/g, '').trim().length < 3) {
+        return 20; // Low score for mention-only messages
+      }
+
+      // Check channel relevance
+      if (channelMeta && channelMeta.channel_purpose) {
+        const purpose = channelMeta.channel_purpose.toLowerCase();
+        const keywords = purpose.split(' ');
+        
+        for (const keyword of keywords) {
+          if (messageContent.includes(keyword)) {
+            score += 10;
+          }
+        }
+      }
+
+      // Check channel name relevance
+      if (channelName) {
+        const channelKeywords = channelName.split('-');
+        for (const keyword of channelKeywords) {
+          if (messageContent.includes(keyword)) {
+            score += 15;
+          }
+        }
+      }
+
+      // Boost score for questions and meaningful interactions
+      if (messageContent.includes('?') || 
+          messageContent.startsWith('how') ||
+          messageContent.startsWith('what') ||
+          messageContent.startsWith('when') ||
+          messageContent.startsWith('where') ||
+          messageContent.startsWith('why')) {
+        score += 20;
+      }
+
+      // Penalize very short messages
+      if (messageContent.length < 10) {
+        score -= 20;
+      }
+
+      // Boost longer, thoughtful messages
+      if (messageContent.length > 50) {
+        score += 10;
+      }
+
+      // Cap the score between 0 and 100
+      return Math.max(0, Math.min(100, score));
+    } catch (error) {
+      console.error('Error calculating relevance score:', error);
+      return 50; // Default on error
+    }
+  }
+
+  /**
+   * Check if message matches spam patterns
+   */
+  private isSpamPattern(content: string): boolean {
+    // Repeated characters (e.g., "aaaaaaa")
+    if (/^(.)\1{4,}$/.test(content)) return true;
+    
+    // Only emojis or special characters
+    if (/^[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\s]*$/u.test(content)) return true;
+    
+    // Common spam phrases
+    const spamPhrases = ['hi', 'hello', 'hey', 'sup', 'yo', 'lol', 'lmao', 'ok', 'k'];
+    if (spamPhrases.includes(content.toLowerCase().trim())) return true;
+    
+    // Too many repeated words
+    const words = content.toLowerCase().split(' ');
+    const uniqueWords = new Set(words);
+    if (words.length > 5 && uniqueWords.size / words.length < 0.3) return true;
+    
+    return false;
+  }
+
+  /**
+   * Handle channel privacy check command
+   */
+  private async handleChannelPrivacyCheck(interaction: ChatInputCommandInteraction) {
+    try {
+      const channel = interaction.channel;
+      const isPrivate = channel && 'members' in channel ? 
+        (channel as any).members?.size < (interaction.guild?.memberCount || 0) : false;
+      
+      const privacyStatus = isPrivate ? 
+        '🔒 This channel appears to be private.' : 
+        '🔓 This channel appears to be public.';
+      
+      const recommendation = `${privacyStatus}
+
+💡 **Privacy Recommendations:**
+• For admin commands and sensitive operations, consider making channels private
+• Use role-based permissions to restrict access to admin channels
+• Regular channels can remain public for community engagement
+• Bot logs and analytics should only be accessible to administrators
+
+**To make this channel private:**
+1. Go to Channel Settings > Permissions
+2. Remove @everyone permissions
+3. Add specific roles or users as needed`;
+
+      await this.editOrReply(interaction, recommendation);
+    } catch (error) {
+      console.error('Error checking channel privacy:', error);
+      await this.editOrReply(interaction, '❌ Error checking channel privacy settings.');
+    }
+  }
 }
