@@ -229,6 +229,44 @@ Notes on auto-starting:
 - A Cron Job on Render or an external uptime monitor is the simplest approach to ensure the bot is running after deploys or restarts.
 - If you prefer to auto-start as part of the process launch, see the advanced single-process wrapper below, but prefer Cron for clarity and reliability.
 
+## ⚖️ Free deployment alternatives (no-cost or generous free tiers)
+
+If you want to avoid paid Render plans, here are popular free or low-cost options suitable for EventBuddy:
+
+- **Vercel** — Best for Vite/Next.js frontends and serverless API routes; automatic Git deployments on push.
+- **Netlify** — Static sites + serverless functions; excellent for Vite frontends.
+- **Fly.io** — Run Dockerized apps globally; small free tier for backend services.
+- **Supabase** — Use Supabase Edge Functions for lightweight serverless APIs and use the hosted Postgres DB.
+- **GitHub Pages** — Free for static frontends (static-only; no backend).
+- **Koyeb / Coolify** — Alternatives with free tiers or self-hosted options (Koyeb has a free service tier; Coolify is self-hosted).
+
+Notes:
+- For frontend-only hosting, prefer Vercel or Netlify — they auto-deploy from GitHub and provide a CDN.
+- For backend Next.js API routes, Vercel (serverless) or Fly.io are good free choices; Supabase Edge Functions work for lightweight APIs.
+- Some providers require a payment method to unlock features or remove limits — read free-tier docs and quotas before deploying.
+
+PowerShell tips:
+- To push code and trigger automatic deployments (Vercel / Netlify):
+```powershell
+git add .
+git commit -m "Deploy"
+git push origin main
+```
+
+- To call the bot admin endpoints from PowerShell (include your `x-bot-admin` header):
+```powershell
+# Start bot
+Invoke-WebRequest -Uri "https://your-backend.example.com/api/bot/start" -Method POST -Headers @{"x-bot-admin"="YOUR_TOKEN"}
+
+# Stop bot
+Invoke-WebRequest -Uri "https://your-backend.example.com/api/bot/stop" -Method POST -Headers @{"x-bot-admin"="YOUR_TOKEN"}
+
+# Status (returns raw response content)
+(Invoke-WebRequest -Uri "https://your-backend.example.com/api/bot/status" -Method GET).Content
+```
+
+Read each provider's free-tier limits (bandwidth, concurrency, function execution time) to pick the best fit.
+
 ## 🌐 Step 4: Deploy Frontend (Vite)
 
 ### Option A: Deploy to Vercel (Recommended for Vite)
