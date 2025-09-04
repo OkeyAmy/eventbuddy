@@ -81,6 +81,43 @@ export class EventBuddyBot {
   private conversationMemory: Map<string, ConversationHistory[]> = new Map();
   private guildOwners: Map<string, string> = new Map(); // guildId -> ownerId
   private conversationLogger: ConversationLogger;
+  private debugLogging: boolean = process.env.DEBUG_LOGGING === 'true';
+
+  private debugLog(label: string, data?: any) {
+    if (!this.debugLogging) return;
+    try {
+      const ts = new Date().toISOString();
+      const payload = data === undefined ? '' : JSON.stringify(data, Object.getOwnPropertyNames(data), 2);
+      console.log(`DEBUG ${ts} - ${label} ${payload}`);
+    } catch (err) {
+      try {
+        console.log(`DEBUG ${new Date().toISOString()} - ${label}`, data);
+      } catch {
+        // swallow
+      }
+    }
+  }
+  // Track recent interactions to avoid double-processing the same interaction (race/hot-reload)
+  private recentInteractions: Map<string, number> = new Map();
+
+  private isDuplicateInteraction(interactionId?: string): boolean {
+    try {
+      if (!interactionId) return false;
+      const now = Date.now();
+      const last = this.recentInteractions.get(interactionId);
+      if (last && (now - last) < 5000) {
+        return true;
+      }
+      this.recentInteractions.set(interactionId, now);
+      // cleanup old entries
+      for (const [id, ts] of Array.from(this.recentInteractions.entries())) {
+        if (now - ts > 60000) this.recentInteractions.delete(id);
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
 
   // Helper method to check if user is server owner
   private isServerOwner(userId: string, guildId: string | null): boolean {
@@ -417,6 +454,14 @@ export class EventBuddyBot {
 
   private async handleSlashCommand(interaction: ChatInputCommandInteraction) {
     const { commandName } = interaction;
+    // Avoid double-processing interactions (Discord can retry or webserver hot-reloads cause duplicates)
+    try {
+      const iid = (interaction as any).id || (interaction as any).interaction?.id;
+      if (this.isDuplicateInteraction(iid)) {
+        console.warn('Duplicate interaction ignored:', iid);
+        return;
+      }
+    } catch {}
 
     try {
       console.log(`🎯 Admin slash command received: /${commandName} from ${interaction.user.username} (${interaction.user.id})`);
@@ -434,9 +479,16 @@ export class EventBuddyBot {
       console.log(`✅ Admin permission verified for /${commandName}`);
 
       // Always acknowledge the interaction first (all admin commands are ephemeral)
+      // Guard against 'Unknown interaction'/'already acknowledged' by checking state and catching specific errors
       if (!interaction.deferred && !interaction.replied) {
+        try {
         await interaction.deferReply({ ephemeral: commandName !== 'help' });
         console.log(`⏳ Initial ephemeral acknowledgment sent for /${commandName}`);
+        } catch (err: any) {
+          // Known Discord errors: 10062 Unknown interaction, 40060 already acknowledged
+          console.warn(`⚠️ Failed to defer reply for /${commandName}:`, err?.message || err);
+          this.debugLog('deferReply.error', { commandName, error: { message: err?.message, code: err?.code, status: err?.status } });
+        }
       }
 
       switch (commandName) {
@@ -482,7 +534,12 @@ export class EventBuddyBot {
         user: interaction.user.username,
         guild: interaction.guildId
       });
+      try {
       await this.editOrReply(interaction, '❌ An error occurred while processing your command.');
+      } catch (err) {
+        console.warn('⚠️ Failed to send error reply to interaction:', err?.message || err);
+        this.debugLog('editOrReply.error', { error: err?.message || err });
+      }
     }
   }
 
@@ -566,25 +623,31 @@ Respond naturally based on the channel context and conversation history above. M
       console.log(`🧠 Generating AI response with ${this.functionDeclarations.length} available functions`);
 
       // Generate response with function calling
+      this.debugLog('generateContent.request', { model: 'gemini-2.5-flash', contentsLength: contents.length, sampleContents: contents.slice(0,2) });
       let result = await model.generateContent({ contents });
       let response = result.response;
+      this.debugLog('generateContent.response', { responsePreview: typeof response?.text === 'function' ? response.text().slice(0,200) : null, hasFunctionCalls: !!response.functionCalls });
 
       // Handle function calls if present
-      if (response.functionCalls && response.functionCalls.length > 0) {
-        console.log(`🔧 Executing ${response.functionCalls.length} function calls`);
+      const functionCalls = typeof response.functionCalls === 'function' ? response.functionCalls() : response.functionCalls;
+      if (functionCalls && functionCalls.length > 0) {
+        console.log(`🔧 Executing ${functionCalls.length} function calls`);
+        this.debugLog('functionCalls.list', functionCalls.map((f: any) => ({ name: f.name, argsPreview: JSON.stringify(f.args).slice(0,200) })));
         
         // Add model response to history
         history.push({
           role: 'model',
-          parts: [{ functionCall: response.functionCalls[0] }]
+          parts: [{ functionCall: functionCalls[0] }]
         });
 
         // Execute each function call  
-        for (const functionCall of (Array.isArray(response.functionCalls) ? response.functionCalls : [])) {
+        for (const functionCall of functionCalls) {
           console.log(`🔧 Calling function: ${functionCall.name}`, functionCall.args);
+          this.debugLog('functionCall.exec.start', { name: functionCall.name, args: functionCall.args });
           
           try {
             const functionResult = await this.executeFunctionCall(functionCall.name, functionCall.args, message);
+            this.debugLog('functionCall.exec.end', { name: functionCall.name, resultPreview: typeof functionResult === 'string' ? functionResult.slice(0,200) : functionResult });
             
             // Add function response to history
             history.push({
@@ -598,6 +661,7 @@ Respond naturally based on the channel context and conversation history above. M
             });
           } catch (error) {
             console.error(`❌ Error executing function ${functionCall.name}:`, error);
+            this.debugLog('functionCall.exec.error', { name: functionCall.name, error: { message: error?.message, stack: error?.stack } });
             
             // Add error response to history
             history.push({
@@ -1213,7 +1277,13 @@ Respond naturally based on the channel context and conversation history above. M
         return DISCORD_BOT_PROMPTS.NO_ACTIVE_EVENTS;
       }
 
-      return DISCORD_BOT_PROMPTS.ACTIVE_EVENTS_FOUND(events);
+      // Normalize event objects so templates can rely on `name` property
+      const normalized = events.map((e: any) => ({
+        ...e,
+        name: e.event_name ?? e.name ?? e.eventName ?? 'Unnamed Event'
+      }));
+
+      return DISCORD_BOT_PROMPTS.ACTIVE_EVENTS_FOUND(normalized);
     } catch (error) {
       console.error('❌ Error getting active events:', error);
       return DISCORD_BOT_PROMPTS.ERROR_DATABASE;
@@ -1318,81 +1388,84 @@ Current issue: Your bot doesn't have permission to read message content.
     console.log('🛑 EventBuddy bot stopped.');
   }
 
-  /**
-   * Calculate relevance score based on channel context and message content
-   */
-  private async calculateRelevanceScore(message: Message): Promise<number> {
-    try {
-      if (!message.guildId) return 50; // Default for DMs
-
-      // Get channel metadata
-      const channelMeta = await this.conversationLogger.getChannelMetadata(message.channelId);
-      
-      const messageContent = message.content.toLowerCase();
-      const channelName = message.channel.isTextBased() ? 
-        (message.channel as TextChannel).name?.toLowerCase() || '' : '';
-      
-      let score = 50; // Base score
-
-      // Check for pure spam patterns
-      if (this.isSpamPattern(messageContent)) {
-        return 0;
-      }
-
-      // Check for mentions only
-      if (message.mentions.users.size > 0 && messageContent.replace(/<@!?\d+>/g, '').trim().length < 3) {
-        return 20; // Low score for mention-only messages
-      }
-
-      // Check channel relevance
-      if (channelMeta && channelMeta.channel_purpose) {
-        const purpose = channelMeta.channel_purpose.toLowerCase();
-        const keywords = purpose.split(' ');
-        
-        for (const keyword of keywords) {
-          if (messageContent.includes(keyword)) {
-            score += 10;
-          }
-        }
-      }
-
-      // Check channel name relevance
-      if (channelName) {
-        const channelKeywords = channelName.split('-');
-        for (const keyword of channelKeywords) {
-          if (messageContent.includes(keyword)) {
-            score += 15;
-          }
-        }
-      }
-
-      // Boost score for questions and meaningful interactions
-      if (messageContent.includes('?') || 
-          messageContent.startsWith('how') ||
-          messageContent.startsWith('what') ||
-          messageContent.startsWith('when') ||
-          messageContent.startsWith('where') ||
-          messageContent.startsWith('why')) {
-        score += 20;
-      }
-
-      // Penalize very short messages
-      if (messageContent.length < 10) {
-        score -= 20;
-      }
-
-      // Boost longer, thoughtful messages
-      if (messageContent.length > 50) {
-        score += 10;
-      }
-
-      // Cap the score between 0 and 100
-      return Math.max(0, Math.min(100, score));
-    } catch (error) {
-      console.error('Error calculating relevance score:', error);
-      return 50; // Default on error
-    }
-  }
+  // /**
+  //  * Calculate relevance score based on channel context and message content
+  //  */
+  // private async calculateRelevanceScore(message: Message): Promise<number> {
+  //   try {
+  //     if (!message.guildId) return 50; // Default for DMs
+  //
+  //     // Get channel metadata
+  //     const channelMeta = await this.conversationLogger.getChannelMetadata(message.channelId);
+  //     
+  //     const messageContent = message.content.toLowerCase();
+  //     const channelName = message.channel.isTextBased() ? 
+  //       (message.channel as TextChannel).name?.toLowerCase() || '' : '';
+  //     
+  //     let score = 50; // Base score
+  //
+  //     // Check for pure spam patterns
+  //     if (this.isSpamPattern(messageContent)) {
+  //       return 0;
+  //     }
+  //
+  //     // Check for mentions only
+  //     if (message.mentions.users.size > 0 && messageContent.replace(/<@!?\d+>/g, '').trim().length < 3) {
+  //       return 20; // Low score for mention-only messages
+  //     }
+  //
+  //     // Check channel relevance
+  //     if (channelMeta && channelMeta.channel_purpose) {
+  //       const purpose = channelMeta.channel_purpose.toLowerCase();
+  //       const keywords = purpose.split(' ');
+  //       
+  //       for (const keyword of keywords) {
+  //         if (messageContent.includes(keyword)) {
+  //           score += 10;
+  //         }
+  //       }
+  //     }
+  //
+  //     // Check channel name relevance
+  //     if (channelName) {
+  //       const channelKeywords = channelName.split('-');
+  //       for (const keyword of channelKeywords) {
+  //         if (messageContent.includes(keyword)) {
+  //           score += 15;
+  //         }
+  //       }
+  //     }
+  //
+  //     // Boost score for questions and meaningful interactions
+  //     if (messageContent.includes('?') || 
+  //         messageContent.startsWith('how') ||
+  //         messageContent.startsWith('what') ||
+  //         messageContent.startsWith('when') ||
+  //         messageContent.startsWith('where') ||
+  //         messageContent.startsWith('why')) {
+  //       score += 20;
+  //     }
+  //
+  //     // Penalize very short messages
+  //     if (messageContent.length < 10) {
+  //       score -= 20;
+  //     }
+  //
+  //     // Boost longer, thoughtful messages
+  //     if (messageContent.length > 50) {
+  //       score += 10;
+  //     }
+  //
+  //     // Cap the score between 0 and 100
+  //     const capped = Math.max(0, Math.min(100, score));
+  //
+  //     // Reduce final relevance by 50% as requested (scale down to 50% of original)
+  //     return Math.round(capped * 0.5);
+  //   } catch (error) {
+  //     console.error('Error calculating relevance score:', error);
+  //     return 50; // Default on error
+  //   }
+  // }
 
   /**
    * Check if message matches spam patterns
