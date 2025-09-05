@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import Prism from '@/components/ui/prism';
 
 const Index = () => {
   const [isConnecting, setIsConnecting] = useState(false);
@@ -24,9 +25,27 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen relative flex items-center justify-center p-4 overflow-hidden">
+      {/* Prism Background */}
+      <div className="fixed inset-0 z-0">
+        <Prism
+          animationType="rotate"
+          timeScale={0.5}
+          height={3.5}
+          baseWidth={5.5}
+          scale={3.6}
+          hueShift={0}
+          colorFrequency={1}
+          noise={0.5}
+          glow={1}
+        />
+      </div>
+      
+      {/* Content Overlay */}
+      <div className="absolute inset-0 bg-slate-900/20 backdrop-blur-[1px] z-10"></div>
+      
       {/* Enhanced Animated Background */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden z-20">
         {/* Floating orbs with improved animations */}
         <div className="absolute -top-1/3 -left-1/3 w-96 h-96 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-full blur-3xl animate-float opacity-60"></div>
         <div className="absolute -bottom-1/3 -right-1/3 w-80 h-80 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-full blur-3xl animate-float opacity-50" style={{ animationDelay: '2s', animationDuration: '8s' }}></div>
@@ -38,7 +57,7 @@ const Index = () => {
       </div>
 
       {/* Enhanced Main Content */}
-      <div className="backdrop-blur-xl bg-white/5 rounded-3xl border border-white/10 p-8 md:p-12 max-w-lg w-full text-center transform transition-all duration-500 hover:scale-[1.02] hover:bg-white/8 relative z-10 shadow-2xl shadow-purple-500/10">
+      <div className="backdrop-blur-xl bg-white/5 rounded-3xl border border-white/10 p-8 md:p-12 max-w-lg w-full text-center transform transition-all duration-500 hover:scale-[1.02] hover:bg-white/8 relative z-30 shadow-2xl shadow-purple-500/10">
         <div className="mb-10">
           {/* Enhanced Logo/Icon with glow effect */}
           <div className="relative w-24 h-24 mx-auto mb-8">

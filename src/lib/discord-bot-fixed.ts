@@ -1148,10 +1148,11 @@ Respond naturally based on the channel context and conversation history above. M
           event_name: eventName,
           event_date: eventDate,
           event_time: eventTime,
-          description: description,
+          event_theme: description,
           host_discord_id: message.author.id,
           guild_id: message.guildId,
-          status: 'active'
+          status: 'active',
+          others: { description: description }
         })
         .select()
         .single();
