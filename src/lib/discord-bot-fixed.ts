@@ -376,6 +376,7 @@ export class EventBuddyBot {
       new SlashCommandBuilder()
         .setName('import_event')
         .setDescription('Import event data from CSV (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
           option.setName('event_name')
             .setDescription('Name of the event')
@@ -389,11 +390,13 @@ export class EventBuddyBot {
 
       new SlashCommandBuilder()
         .setName('end_event')
-        .setDescription('End current event and create post-event channel (Admin only)'),
+        .setDescription('End current event and create post-event channel (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
       new SlashCommandBuilder()
         .setName('analytics')
         .setDescription('Get event analytics (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
           option.setName('event_name')
             .setDescription('Specific event to analyze (optional)')
@@ -406,7 +409,8 @@ export class EventBuddyBot {
 
       new SlashCommandBuilder()
         .setName('input')
-        .setDescription('Send a message to the AI for processing')
+        .setDescription('Send a message to the AI for processing (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
           option.setName('message')
             .setDescription('Your message for the AI')
@@ -415,7 +419,8 @@ export class EventBuddyBot {
 
       new SlashCommandBuilder()
         .setName('create_event')
-        .setDescription('Create a new event')
+        .setDescription('Create a new event (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
           option.setName('name')
             .setDescription('Event name')
@@ -430,7 +435,12 @@ export class EventBuddyBot {
           option.setName('time')
             .setDescription('Event time (HH:MM)')
             .setRequired(false)
-        )
+        ),
+
+      new SlashCommandBuilder()
+        .setName('channel_privacy_check')
+        .setDescription('Check channel privacy settings and get recommendations (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     ];
 
     this.client.once('ready', async () => {
@@ -482,8 +492,10 @@ export class EventBuddyBot {
       // Guard against 'Unknown interaction'/'already acknowledged' by checking state and catching specific errors
       if (!interaction.deferred && !interaction.replied) {
         try {
-        await interaction.deferReply({ ephemeral: commandName !== 'help' });
-        console.log(`⏳ Initial ephemeral acknowledgment sent for /${commandName}`);
+          await interaction.deferReply({ 
+            flags: commandName !== 'help' ? (1 << 6) : undefined // EPHEMERAL flag for admin commands
+          });
+          console.log(`⏳ Initial ephemeral acknowledgment sent for /${commandName}`);
         } catch (err: any) {
           // Known Discord errors: 10062 Unknown interaction, 40060 already acknowledged
           console.warn(`⚠️ Failed to defer reply for /${commandName}:`, err?.message || err);
@@ -567,11 +579,13 @@ export class EventBuddyBot {
       // Build AI context from database
       let contextFromDB = '';
       if (message.guildId) {
+        console.log(`📚 Building AI context from database for user ${message.author.id} in channel ${message.channelId}...`);
         contextFromDB = await this.conversationLogger.buildAIContext(
           message.author.id,
           message.channelId,
           message.guildId
         );
+        console.log(`📚 Database context length: ${contextFromDB.length} characters`);
       }
 
       // Analyze the message with AI using function calling
@@ -582,10 +596,35 @@ export class EventBuddyBot {
 
       // Build conversation context with user context and database context
       const isOwner = this.isServerOwner(message.author.id, message.guildId);
-      const systemPrompt = `${DISCORD_BOT_PROMPTS.SYSTEM_PROMPT}
+      const channelName = message.channel.isTextBased() ? (message.channel as TextChannel).name : 'unknown';
+      
+      console.log(`👤 User context: ${message.author.username} ${isOwner ? '(Server Owner)' : '(Regular User)'} in #${channelName}`);
+
+      const systemPrompt = `You are EventBuddy, a sophisticated AI moderation assistant for Discord servers. Your primary role is to maintain on-topic conversation within designated channels by filtering spam and assisting with event management.
+
+You can:
+- Create and manage events
+- Create, archive, delete, and rename channels  
+- Provide analytics and insights
+- Engage in natural conversation (only when relevant)
+
+CRITICAL SPAM FILTERING RULES:
+- Only respond to messages that are genuinely relevant to the channel's purpose
+- Never respond to pure spam: mentions-only, repetitive characters, common phrases like "hi/hey/lol"
+- Focus on meaningful conversations that align with the channel's designated topic
+- If a question is not directed to you or about events/channels, just ignore it and don't respond
+- Use your intelligence to determine if the message warrants a response based on context and relevance
+
+Important Guidelines:
+- Be helpful and friendly when responding to relevant messages
+- When users ask about active events, automatically check the database using get_active_events
+- When users want to create channels, automatically create text channels using create_text_channel
+- Only text channels can be created (no voice channels)
+- Maintain channel-specific personality and context
+- Learn from conversation history to improve responses per channel
 
 Current user: @${message.author.username} ${isOwner ? '(Server Owner)' : '(Regular User)'}
-Channel: ${message.channelId}
+Channel: #${channelName} (${message.channelId})
 Guild: ${message.guildId}
 User ID: ${message.author.id}
 
@@ -621,6 +660,7 @@ Respond naturally based on the channel context and conversation history above. M
       ];
 
       console.log(`🧠 Generating AI response with ${this.functionDeclarations.length} available functions`);
+      console.log(`🎯 Message analysis: "${message.content.substring(0, 50)}${message.content.length > 50 ? '...' : ''}"`);
 
       // Generate response with function calling
       this.debugLog('generateContent.request', { model: 'gemini-2.5-flash', contentsLength: contents.length, sampleContents: contents.slice(0,2) });
@@ -643,10 +683,13 @@ Respond naturally based on the channel context and conversation history above. M
         // Execute each function call  
         for (const functionCall of functionCalls) {
           console.log(`🔧 Calling function: ${functionCall.name}`, functionCall.args);
+          console.log(`🔧 Database interaction starting for function: ${functionCall.name}`);
           this.debugLog('functionCall.exec.start', { name: functionCall.name, args: functionCall.args });
           
           try {
             const functionResult = await this.executeFunctionCall(functionCall.name, functionCall.args, message);
+            console.log(`✅ Database interaction completed for function: ${functionCall.name}`);
+            console.log(`📊 Function result preview: ${typeof functionResult === 'string' ? functionResult.substring(0, 100) : 'Non-string result'}`);
             this.debugLog('functionCall.exec.end', { name: functionCall.name, resultPreview: typeof functionResult === 'string' ? functionResult.slice(0,200) : functionResult });
             
             // Add function response to history
@@ -661,6 +704,7 @@ Respond naturally based on the channel context and conversation history above. M
             });
           } catch (error) {
             console.error(`❌ Error executing function ${functionCall.name}:`, error);
+            console.error(`❌ Database interaction failed for function: ${functionCall.name}`);
             this.debugLog('functionCall.exec.error', { name: functionCall.name, error: { message: error?.message, stack: error?.stack } });
             
             // Add error response to history
@@ -677,6 +721,7 @@ Respond naturally based on the channel context and conversation history above. M
         }
 
         // Generate final response incorporating function results
+        console.log(`🤖 Generating final AI response incorporating function results...`);
         const finalContents: Content[] = [
           { role: 'user', parts: [{ text: systemPrompt }] },
           ...history.map(h => ({
@@ -693,19 +738,18 @@ Respond naturally based on the channel context and conversation history above. M
         response = result.response;
       }
 
-      // Extract response text and perform simple spam check
+      // Extract response text - let AI handle spam filtering via prompting
       const responseText = response.text();
-      const isSpam = message.content.length < 3 || 
-                     /^(.)\1{4,}$/.test(message.content) || // Repeated characters
-                     message.content.split(' ').length > 50; // Too long
+      console.log(`🤖 AI response preview: "${responseText.substring(0, 100)}${responseText.length > 100 ? '...' : ''}"`);
 
       // Send response and log it
-      if (responseText && responseText.trim() && !isSpam) {
+      if (responseText && responseText.trim()) {
         const sentMessage = await message.reply(responseText);
         console.log(`🤖 AI replied: "${responseText}"`);
 
         // Log the AI interaction to database
         if (message.guildId) {
+          console.log(`📝 Logging AI response to database...`);
           await this.conversationLogger.logAIResponse(
             message.author.id,
             message.channelId,
@@ -715,6 +759,7 @@ Respond naturally based on the channel context and conversation history above. M
             responseText,
             { systemPrompt, contextFromDB }
           );
+          console.log(`✅ AI response logged to database successfully`);
         }
 
         // Add AI response to memory
@@ -722,10 +767,13 @@ Respond naturally based on the channel context and conversation history above. M
           role: 'model',
           parts: [{ text: responseText }]
         });
-      } else if (isSpam) {
-        console.log(`🚫 Spam detected, not responding to: "${message.content}"`);
+
+        // Update conversation memory
+        this.conversationMemory.set(conversationKey, history);
+      } else {
+        console.log(`🤐 AI chose not to respond to: "${message.content}"`);
         
-        // Still log spam messages for learning purposes
+        // Still log the message for learning purposes but mark as no response
         if (message.guildId) {
           await this.conversationLogger.logConversation({
             user_id: message.author.id,
@@ -734,13 +782,19 @@ Respond naturally based on the channel context and conversation history above. M
             message_content: message.content,
             sender_id: message.author.id,
             sender_username: message.author.username,
-            context_used: { spam: true, reason: 'AI detected as spam' }
+            context_used: { no_response: true, reason: 'AI determined message did not warrant response' }
           });
         }
       }
 
     } catch (error) {
       console.error('❌ Error handling natural language message:', error);
+      console.error('❌ Full error details:', {
+        message: error.message,
+        stack: error.stack,
+        user: message.author.username,
+        content: message.content.substring(0, 100)
+      });
       // Send a friendly error message to the user
       try {
         await message.reply('❌ Sorry, I encountered an error while processing your message. Please try again!');
@@ -852,12 +906,17 @@ Respond naturally based on the channel context and conversation history above. M
     }
   }
 
-  private async editOrReply(interaction: ChatInputCommandInteraction, content: string) {
+  private async editOrReply(interaction: ChatInputCommandInteraction, content: string | any) {
     try {
+      const payload = typeof content === 'string' ? { content } : content;
+      
       if (interaction.deferred) {
-        await interaction.editReply(content);
+        await interaction.editReply(payload);
       } else if (!interaction.replied) {
-        await interaction.reply({ content, ephemeral: true });
+        await interaction.reply({ 
+          ...payload,
+          flags: (1 << 6) // EPHEMERAL flag
+        });
       }
     } catch (error) {
       console.error('❌ Error sending interaction response:', error);
@@ -935,52 +994,107 @@ Respond naturally based on the channel context and conversation history above. M
 
   private async handleEndEvent(interaction: ChatInputCommandInteraction) {
     try {
-      const { data: activeEvent } = await this.supabase
+      console.log(`🏁 Looking for active events for user ${interaction.user.id} in guild ${interaction.guildId}...`);
+      
+      const { data: activeEvents, error: fetchError } = await this.supabase
         .from('events')
         .select('*')
         .eq('host_discord_id', interaction.user.id)
         .eq('guild_id', interaction.guildId)
-        .eq('status', 'active')
-        .single();
+        .eq('status', 'active');
 
-      if (!activeEvent) {
-        return this.editOrReply(interaction, '❌ No active event found!');
+      if (fetchError) {
+        console.error('❌ Database fetch error:', fetchError);
+        return this.editOrReply(interaction, '❌ Database error while fetching events.');
       }
 
-      await this.supabase
+      console.log(`📊 Found ${activeEvents?.length || 0} active events`);
+
+      if (!activeEvents || activeEvents.length === 0) {
+        return this.editOrReply(interaction, '❌ No active events found for you in this server!');
+      }
+
+      // Take the first active event
+      const activeEvent = activeEvents[0];
+      console.log(`🎯 Ending event: ${activeEvent.event_name} (ID: ${activeEvent.id})`);
+
+      const { error: updateError } = await this.supabase
         .from('events')
-        .update({ status: 'ended' })
+        .update({ 
+          status: 'ended',
+          updated_at: new Date().toISOString()
+        })
         .eq('id', activeEvent.id);
 
-      await this.editOrReply(interaction, `✅ Event "${activeEvent.event_name}" ended successfully!`);
+      if (updateError) {
+        console.error('❌ Database update error:', updateError);
+        return this.editOrReply(interaction, '❌ Failed to update event status in database.');
+      }
+
+      console.log(`✅ Successfully ended event: ${activeEvent.event_name}`);
+      await this.editOrReply(interaction, `✅ Event "${activeEvent.event_name}" has been ended successfully!`);
     } catch (error) {
       console.error('❌ Error ending event:', error);
-      await this.editOrReply(interaction, '❌ Error ending event. Please try again.');
+      await this.editOrReply(interaction, '❌ Unexpected error while ending event. Please try again.');
     }
   }
 
   private async handleAnalytics(interaction: ChatInputCommandInteraction) {
     try {
+      console.log(`📊 Fetching analytics data for guild ${interaction.guildId}...`);
+      
+      // Get events data
       const { data: events } = await this.supabase
         .from('events')
         .select('*')
-        .eq('host_discord_id', interaction.user.id)
         .eq('guild_id', interaction.guildId);
 
+      // Get registered users count
+      const { data: registeredUsers } = await this.supabase
+        .from('discord_users')
+        .select('discord_id')
+        .eq('discord_id', interaction.user.id);
+
+      // Get total conversations
+      const { data: conversations } = await this.supabase
+        .from('conversation_history')
+        .select('id')
+        .eq('guild_id', interaction.guildId);
+
+      // Get unique channel count
+      const { data: channels } = await this.supabase
+        .from('channel_metadata')
+        .select('channel_id')
+        .eq('guild_id', interaction.guildId);
+
+      const totalEvents = events?.length || 0;
+      const activeEvents = events?.filter(e => e.status === 'active').length || 0;
+      const completedEvents = events?.filter(e => e.status === 'ended').length || 0;
+      const totalConversations = conversations?.length || 0;
+      const uniqueChannels = channels?.length || 0;
+      const hasUserProfile = registeredUsers?.length > 0;
+
+      console.log(`📊 Analytics data: ${totalEvents} events, ${totalConversations} conversations, ${uniqueChannels} channels`);
+
       const analyticsEmbed = new EmbedBuilder()
-        .setTitle('📊 Event Analytics')
+        .setTitle('📊 Server Analytics Dashboard')
+        .setDescription(`Analytics for **${interaction.guild?.name}**`)
         .addFields(
-          { name: '🎯 Total Events', value: (events?.length || 0).toString(), inline: true },
-          { name: '⚡ Active Events', value: (events?.filter(e => e.status === 'active').length || 0).toString(), inline: true },
-          { name: '✅ Completed Events', value: (events?.filter(e => e.status === 'ended').length || 0).toString(), inline: true }
+          { name: '🎯 Total Events', value: totalEvents.toString(), inline: true },
+          { name: '⚡ Active Events', value: activeEvents.toString(), inline: true },
+          { name: '✅ Completed Events', value: completedEvents.toString(), inline: true },
+          { name: '💬 Total Conversations', value: totalConversations.toString(), inline: true },
+          { name: '📺 Active Channels', value: uniqueChannels.toString(), inline: true },
+          { name: '👤 Your Profile', value: hasUserProfile ? '✅ Registered' : '❌ Not found', inline: true }
         )
+        .setTimestamp()
         .setColor(0x5865F2);
 
-      await this.editOrReply(interaction, '');
-      await interaction.followUp({ embeds: [analyticsEmbed], ephemeral: true });
+      await this.editOrReply(interaction, { embeds: [analyticsEmbed] });
+      console.log(`✅ Analytics report sent successfully to ${interaction.user.username}`);
     } catch (error) {
       console.error('❌ Error generating analytics:', error);
-      await this.editOrReply(interaction, '❌ Error generating analytics.');
+      await this.editOrReply(interaction, '❌ Error generating analytics. Please try again.');
     }
   }
 
