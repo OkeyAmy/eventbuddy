@@ -603,43 +603,32 @@ export class EventBuddyBot {
       
       console.log(`👤 User context: ${message.author.username} ${isOwner ? '(Server Owner)' : '(Regular User)'} in #${channelName}`);
 
-      const systemPrompt = `You are EventBuddy, a sophisticated AI moderation assistant for Discord servers. Your primary role is to maintain on-topic conversation within designated channels by filtering spam and assisting with event management.
+      const systemPrompt = `${ENHANCED_DISCORD_BOT_PROMPTS.SYSTEM_PROMPT}
 
-You can:
-- Create and manage events
-- Create, archive, delete, and rename channels  
-- Provide analytics and insights
-- Engage in natural conversation (only when relevant)
-
-CRITICAL SPAM FILTERING RULES:
-- Only respond to messages that are genuinely relevant to the channel's purpose
-- Never respond to pure spam: mentions-only, repetitive characters, common phrases like "hi/hey/lol"
-- Focus on meaningful conversations that align with the channel's designated topic
-- If a question is not directed to you or about events/channels, just ignore it and don't respond
-- Use your intelligence to determine if the message warrants a response based on context and relevance
-
-Important Guidelines:
-- Be helpful and friendly when responding to relevant messages
-- When users ask about active events, automatically check the database using get_active_events
-- When users want to create channels, automatically create text channels using create_text_channel
-- Only text channels can be created (no voice channels)
-- Maintain channel-specific personality and context
-- Learn from conversation history to improve responses per channel
-
-Current user: @${message.author.username} ${isOwner ? '(Server Owner)' : '(Regular User)'}
+CRITICAL OPERATIONAL CONTEXT:
+Current user: @${message.author.username} ${isOwner ? '(Server Owner - Has Admin Access)' : '(Regular User - Limited Access)'}
 Channel: #${channelName} (${message.channelId})
 Guild: ${message.guildId}
 User ID: ${message.author.id}
 
 ${contextFromDB ? `\nChannel Context and History:\n${contextFromDB}\n` : ''}
 
-Available functions: get_active_events, create_text_channel, create_event, end_event, get_event_analytics, and channel management.
-When users ask about active events, use get_active_events function automatically.
-When users want to create channels, use create_text_channel function directly.
+AVAILABLE FUNCTIONS:
+- Admin Only: create_event, update_event, get_event, delete_event, end_event, create_channel, archive_channel, delete_channel, rename_channel, create_text_channel
+- Regular Users: get_active_events, basic event info from "others" field
 
-${ENHANCED_DISCORD_BOT_PROMPTS.SYSTEM_PROMPT}
+AUTO-FIND BEHAVIOR:
+- NEVER ask users for event IDs
+- When no event ID/name provided, automatically find user's most recent active event
+- Use get_active_events first to identify available events
 
-Respond naturally based on the channel context and conversation history above. Maintain consistent personality per channel.`;
+STRICT ANTI-SPAM & DUPLICATE PREVENTION:
+- Ignore spam, repetitive messages, off-topic conversations
+- Only respond to legitimate event/channel management requests
+- NEVER send duplicate responses
+- Monitor conversation context to avoid redundant replies
+
+Respond naturally based on context and user permissions.`;
 
       // Add user message to history
       history.push({
@@ -810,9 +799,23 @@ Respond naturally based on the channel context and conversation history above. M
   }
 
   private async executeFunctionCall(functionName: string, args: any, message: Message): Promise<any> {
+    // Check admin permissions for restricted functions
+    const adminOnlyFunctions = ['create_event', 'update_event', 'get_event', 'end_event', 'create_channel', 'archive_channel', 'delete_channel', 'rename_channel', 'create_text_channel'];
+    const isAdmin = this.isServerOwner(message.author.id, message.guildId);
+    
+    if (adminOnlyFunctions.includes(functionName) && !isAdmin) {
+      return `❌ Access denied: Only server administrators can use ${functionName}`;
+    }
+
     switch (functionName) {
       case 'create_event':
         return await this.createEvent(message, args);
+      case 'update_event':
+        return await this.updateEvent(message, args);
+      case 'get_event':
+        return await this.getEvent(message, args);
+      case 'delete_event':
+        return await this.deleteEvent(message, args);
       case 'end_event':
         return await this.endEvent(message, args);
       case 'create_channel':
@@ -1167,6 +1170,171 @@ Respond naturally based on the channel context and conversation history above. M
       return `Event "${eventName}" created successfully! Event ID: ${eventData.id}`;
     } catch (error) {
       console.error('❌ Error creating event:', error);
+      throw error;
+    }
+  }
+
+  // Add missing function implementations
+  private async updateEvent(message: Message, args: any) {
+    const { eventId, eventName, eventDate, eventTime, eventTheme, others } = args;
+    
+    try {
+      // Auto-find event if no ID provided
+      let targetEventId = eventId;
+      if (!targetEventId && eventName) {
+        const { data: foundEvent } = await this.supabase
+          .from('events')
+          .select('id')
+          .eq('event_name', eventName)
+          .eq('host_discord_id', message.author.id)
+          .single();
+        targetEventId = foundEvent?.id;
+      } else if (!targetEventId) {
+        // Find user's most recent active event
+        const { data: foundEvent } = await this.supabase
+          .from('events')
+          .select('id')
+          .eq('host_discord_id', message.author.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        targetEventId = foundEvent?.id;
+      }
+
+      if (!targetEventId) {
+        return "❌ No event found to update. Create an event first or specify the event name.";
+      }
+
+      const updateData: any = { updated_at: new Date().toISOString() };
+      
+      if (eventName) updateData.event_name = eventName;
+      if (eventDate) updateData.event_date = eventDate;
+      if (eventTime) updateData.event_time = eventTime;
+      if (eventTheme) updateData.event_theme = eventTheme;
+      if (others) {
+        // Append to existing others data
+        const { data: existingEvent } = await this.supabase
+          .from('events')
+          .select('others')
+          .eq('id', targetEventId)
+          .single();
+        
+        const existingOthers = existingEvent?.others || {};
+        updateData.others = { ...(typeof existingOthers === 'object' ? existingOthers : {}), additional: others };
+      }
+
+      const { data: event, error } = await this.supabase
+        .from('events')
+        .update(updateData)
+        .eq('id', targetEventId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return `✅ Event "${event.event_name}" updated successfully!
+📆 Date: ${event.event_date || 'Not set'}
+🕐 Time: ${event.event_time || 'Not set'}
+🎨 Theme: ${event.event_theme || 'No theme'}
+${event.others ? `📋 Additional Info: ${JSON.stringify(event.others)}` : ''}`;
+    } catch (error) {
+      console.error('❌ Error updating event:', error);
+      throw error;
+    }
+  }
+
+  private async getEvent(message: Message, args: any) {
+    const { eventId, eventName } = args;
+    
+    try {
+      let query = this.supabase.from('events').select('*');
+      
+      if (eventId) {
+        query = query.eq('id', eventId);
+      } else if (eventName) {
+        query = query.eq('event_name', eventName);
+      } else {
+        // Auto-find user's most recent active event
+        query = query.eq('host_discord_id', message.author.id).eq('status', 'active').order('created_at', { ascending: false }).limit(1);
+      }
+
+      const { data: events, error } = await query;
+      if (error) throw error;
+
+      const event = Array.isArray(events) ? events[0] : events;
+      if (!event) {
+        return "❌ No event found. Create an event first or specify the event name.";
+      }
+
+      return `Event Details:
+📅 **${event.event_name}**
+📆 Date: ${event.event_date || 'Not set'}
+🕐 Time: ${event.event_time || 'Not set'}
+🎨 Theme: ${event.event_theme || 'No theme'}
+👥 Total Attendees: ${event.total_attendees || 0}
+📝 Status: ${event.status}
+${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}`;
+    } catch (error) {
+      console.error('❌ Error retrieving event:', error);
+      throw error;
+    }
+  }
+
+  private async deleteEvent(message: Message, args: any) {
+    const { eventId, eventName } = args;
+    
+    try {
+      // Auto-find event if no ID provided
+      let targetEventId = eventId;
+      let targetEventName = eventName;
+      
+      if (!targetEventId && eventName) {
+        const { data: foundEvent } = await this.supabase
+          .from('events')
+          .select('id, event_name')
+          .eq('event_name', eventName)
+          .eq('host_discord_id', message.author.id)
+          .single();
+        targetEventId = foundEvent?.id;
+        targetEventName = foundEvent?.event_name;
+      } else if (!targetEventId) {
+        // Find user's most recent active event
+        const { data: foundEvent } = await this.supabase
+          .from('events')
+          .select('id, event_name')
+          .eq('host_discord_id', message.author.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        targetEventId = foundEvent?.id;
+        targetEventName = foundEvent?.event_name;
+      } else {
+        // Get event name for confirmation
+        const { data: foundEvent } = await this.supabase
+          .from('events')
+          .select('event_name')
+          .eq('id', targetEventId)
+          .single();
+        targetEventName = foundEvent?.event_name;
+      }
+
+      if (!targetEventId) {
+        return "❌ No event found to delete. Create an event first or specify the event name.";
+      }
+
+      // Delete the event
+      const { error } = await this.supabase
+        .from('events')
+        .delete()
+        .eq('id', targetEventId);
+
+      if (error) throw error;
+
+      return `✅ Event "${targetEventName}" has been permanently deleted.`;
+    } catch (error) {
+      console.error('❌ Error deleting event:', error);
       throw error;
     }
   }
