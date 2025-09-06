@@ -144,40 +144,42 @@ export class EventBuddyBot {
     },
     {
       name: 'update_event',
-      description: 'Update an existing event with new information',
+      description: 'Update an existing event (auto-finds user\'s event if no ID provided)',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          eventId: { type: SchemaType.STRING, description: 'ID of the event to update' },
+          eventId: { type: SchemaType.STRING, description: 'Optional ID of the event to update' },
           eventName: { type: SchemaType.STRING, description: 'New name of the event' },
           eventDate: { type: SchemaType.STRING, description: 'New event date (YYYY-MM-DD)' },
           eventTime: { type: SchemaType.STRING, description: 'New event time (HH:MM)' },
           eventTheme: { type: SchemaType.STRING, description: 'New event theme' },
           others: { type: SchemaType.STRING, description: 'Additional information to append to event' }
         },
-        required: ['eventId']
+        required: []
       }
     },
     {
       name: 'get_event',
-      description: 'Get details of a specific event',
+      description: 'Get details of a specific event (auto-finds user\'s active event if no name provided)',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          eventId: { type: SchemaType.STRING, description: 'ID of the event to retrieve' }
+          eventId: { type: SchemaType.STRING, description: 'Optional ID of the event to retrieve' },
+          eventName: { type: SchemaType.STRING, description: 'Optional name of the event to retrieve' }
         },
-        required: ['eventId']
+        required: []
       }
     },
     {
       name: 'delete_event',
-      description: 'Delete an event permanently',
+      description: 'Delete an event permanently (auto-finds user\'s event if no identifier provided)',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          eventId: { type: SchemaType.STRING, description: 'ID of the event to delete' }
+          eventId: { type: SchemaType.STRING, description: 'Optional ID of the event to delete' },
+          eventName: { type: SchemaType.STRING, description: 'Optional name of the event to delete' }
         },
-        required: ['eventId']
+        required: []
       }
     },
     {

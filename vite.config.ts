@@ -19,8 +19,4 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  clearScreen: false,
-  esbuild: {
-    target: 'es2015'
-  }
 }));
