@@ -19,6 +19,7 @@ import {
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType, Part } from '@google/generative-ai';
 import { DISCORD_BOT_PROMPTS } from '../prompts/discord-bot-prompts';
+import { ENHANCED_DISCORD_BOT_PROMPTS } from '../prompts/enhanced-discord-bot-prompts';
 import { ConversationLogger } from './conversation-logger';
 
 // Types
@@ -181,11 +182,11 @@ export class EventBuddyBot {
     },
     {
       name: 'end_event',
-      description: 'End an active event',
+      description: 'End an active event (automatically finds user\'s active event)',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          eventId: { type: SchemaType.STRING, description: 'ID of the event to end' }
+          eventName: { type: SchemaType.STRING, description: 'Optional specific event name to end' }
         },
         required: []
       }
@@ -633,6 +634,8 @@ ${contextFromDB ? `\nChannel Context and History:\n${contextFromDB}\n` : ''}
 Available functions: get_active_events, create_text_channel, create_event, end_event, get_event_analytics, and channel management.
 When users ask about active events, use get_active_events function automatically.
 When users want to create channels, use create_text_channel function directly.
+
+${ENHANCED_DISCORD_BOT_PROMPTS.SYSTEM_PROMPT}
 
 Respond naturally based on the channel context and conversation history above. Maintain consistent personality per channel.`;
 
