@@ -466,8 +466,11 @@ I'm learning and adapting to your server's unique culture:
 • Server-specific norms and expectations
 • User preferences and behaviors
 
+The user does not have access to eventID because this are used internaly
+
 **💡 This helps me provide more personalized and relevant assistance!**`
 };
 
 // Export the enhanced prompts as the default
 export default ENHANCED_DISCORD_BOT_PROMPTS;
+

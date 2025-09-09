@@ -1,38 +1,39 @@
-FROM node:18-alpine AS builder
+FROM node:18-alpine
 
 WORKDIR /app
 
-# Enable corepack and install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install curl for healthchecks and other utilities
+RUN apk add --no-cache curl bash
 
-# Copy package files and install dependencies for build
+# Enable corepack and install pnpm with specific version for consistency
+RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
+
+# Copy package files and install all dependencies
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile
 
-# Copy source and build Next.js in standalone mode
+# Copy source code
 COPY . .
-RUN pnpm exec next build --output standalone
 
-FROM node:18-alpine AS runtime
-WORKDIR /app
-
-# Install curl for healthchecks
-RUN apk add --no-cache curl
-
-# Copy the standalone server output from the builder
-COPY --from=builder /app/.next/standalone .
-COPY --from=builder /app/.next/static ./.next/static
-
+# Expose port 3000 (Railway will handle port mapping)
 EXPOSE 3000
-ENV NODE_ENV=production
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+# Railway-specific environment variables
+ENV NODE_ENV=development
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+# Health check optimized for Railway
+HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
-# Copy entrypoint which starts the server and triggers bot auto-start
+# Copy entrypoint which starts the API, runs Discord test, and starts bot
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Entrypoint handles starting the Node server and then calling /api/bot/start
+# Railway deployment labels
+LABEL railway.service="eventbuddy-bot"
+LABEL railway.type="web"
+
+# Entrypoint handles starting the Next.js API in dev mode, Discord test, and bot
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

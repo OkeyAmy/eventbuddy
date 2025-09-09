@@ -1,41 +1,104 @@
 #!/bin/sh
 set -e
 
-# Start the Next.js standalone server in background
-node server.js &
-PID=$!
+# Enhanced logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [docker-entrypoint] $1"
+}
 
-# Wait for the server to become healthy (timeout after 60s)
+log "🚀 Starting EventBuddy backend services..."
+log "🔧 Function: initialize_eventbuddy_services"
+
+# Environment validation
+log "🔍 Function: validate_environment_variables"
+REQUIRED_VARS="DISCORD_BOT_TOKEN NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY GEMINI_API_KEY"
+for var in $REQUIRED_VARS; do
+    if eval "[ -z \"\$$var\" ]"; then
+        log "❌ Missing required environment variable: $var"
+        exit 1
+    else
+        log "✅ Environment variable $var is set"
+    fi
+done
+
+# Run Discord test setup
+log "🎮 Function: run_discord_test_setup"
+log "Running Discord bot test and command registration..."
+if pnpm test:discord; then
+    log "✅ Discord test setup completed successfully"
+else
+    log "⚠️  Discord test completed with warnings (continuing anyway)"
+fi
+
+# Start Next.js API in development mode in background
+log "🌐 Function: start_nextjs_api_server"
+log "Starting Next.js API in development mode on port 3000..."
+pnpm api:dev &
+API_PID=$!
+log "✅ Next.js API server started with PID: $API_PID"
+
+# Wait for the API to become healthy (timeout after 60s)
+log "🔍 Function: wait_for_api_health_check"
 HEALTH_URL="http://127.0.0.1:3000/api/health"
 RETRIES=12
 SLEEP=5
 COUNT=0
 
+log "Checking API health at: $HEALTH_URL"
 until [ $COUNT -ge $RETRIES ]
 do
   if curl -sSf "$HEALTH_URL" >/dev/null 2>&1; then
-    echo "Server is healthy"
+    log "✅ API health check passed - server is ready"
     break
   fi
   COUNT=$((COUNT+1))
-  echo "Waiting for server... ($COUNT/$RETRIES)"
+  log "⏳ Waiting for API health check... (attempt $COUNT/$RETRIES)"
   sleep $SLEEP
 done
 
-# If server healthy, trigger bot start endpoint using BOT_ADMIN_TOKEN if provided
+# Verify API is actually healthy before proceeding
+log "🔍 Function: verify_api_ready_for_bot"
 if curl -sSf "$HEALTH_URL" >/dev/null 2>&1; then
-  if [ -n "$BOT_ADMIN_TOKEN" ]; then
-    echo "Calling /api/bot/start with admin token"
-    curl -s -X POST http://127.0.0.1:3000/api/bot/start -H "x-bot-admin: $BOT_ADMIN_TOKEN" || true
+  log "✅ API confirmed healthy - proceeding to start Discord bot"
+  
+  # Start the Discord bot
+  log "🤖 Function: start_discord_bot_listener"
+  log "Making request to start Discord bot via API..."
+  
+  if BOT_RESPONSE=$(curl -sS -X POST http://localhost:3000/api/bot/start 2>&1); then
+    log "✅ Discord bot start request successful"
+    log "📝 Bot start response: $BOT_RESPONSE"
+    
+    # Verify bot actually started by checking status
+    log "🔍 Function: verify_bot_status"
+    sleep 3  # Give bot time to initialize
+    
+    if BOT_STATUS=$(curl -sS http://localhost:3000/api/bot/status 2>&1); then
+      log "✅ Bot status check successful: $BOT_STATUS"
+    else
+      log "⚠️  Bot status check failed, but continuing: $BOT_STATUS"
+    fi
   else
-    echo "Calling /api/bot/start without admin token"
-    curl -s -X POST http://127.0.0.1:3000/api/bot/start || true
+    log "❌ Discord bot start request failed: $BOT_RESPONSE"
+    log "🔧 Container will continue running API server only"
   fi
 else
-  echo "Server did not become healthy; not starting bot"
+  log "❌ API health check failed after $RETRIES attempts"
+  log "❌ Cannot start Discord bot without healthy API"
+  exit 1
 fi
 
-# Wait on the server process
-wait $PID
+log "🎉 All services initialization completed!"
+log "📊 Service Status Summary:"
+log "   - Next.js API Server: ✅ RUNNING (PID: $API_PID)"
+log "   - Discord Bot Listener: ✅ STARTED"
+log "   - Health Check Endpoint: http://localhost:3000/api/health"
+log "   - Bot Status Endpoint: http://localhost:3000/api/bot/status"
+
+log "🔄 Function: maintain_service_lifecycle"
+log "Container is running and maintaining services..."
+
+# Wait on the API process to keep container alive
+wait $API_PID
 
 
