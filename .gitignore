@@ -45,3 +45,8 @@ Thumbs.db
 
 # Misc
 *.local
+
+
+# Railway
+railway.toml
+RAILWAY_DEPLOYMENT.md
