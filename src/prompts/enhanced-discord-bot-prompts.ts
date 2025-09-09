@@ -474,3 +474,5 @@ The user does not have access to eventID because this are used internaly
 // Export the enhanced prompts as the default
 export default ENHANCED_DISCORD_BOT_PROMPTS;
 
+
+
