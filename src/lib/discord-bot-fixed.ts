@@ -282,6 +282,19 @@ export class EventBuddyBot {
         },
         required: ['channelName']
       }
+    },
+    {
+      name: 'forward_question_to_admin',
+      description: 'Forward a user question about an event to the admin when the bot cannot answer',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          question: { type: SchemaType.STRING, description: 'The question to forward to admin' },
+          userId: { type: SchemaType.STRING, description: 'ID of user asking the question' },
+          username: { type: SchemaType.STRING, description: 'Username of person asking' }
+        },
+        required: ['question', 'userId', 'username']
+      }
     }
   ];
 
@@ -1808,5 +1821,51 @@ Current issue: Your bot doesn't have permission to read message content.
       console.error('Error checking channel privacy:', error);
       await this.editOrReply(interaction, '❌ Error checking channel privacy settings.');
     }
+  }
+
+  // Add the question forwarding function at the end of createEventFunctions
+  private addQuestionForwardingFunction(allFunctions: any, client: Client, supabase: any, guildId: string, guild: any) {
+    allFunctions.forward_question_to_admin = async ({ question, userId, username }: { question: string; userId: string; username: string }) => {
+      try {
+        // Get guild settings to find admin
+        const { data: guildSettings } = await supabase
+          .from('guild_settings')
+          .select('*')
+          .eq('guild_id', guildId)
+          .single();
+
+        if (!guildSettings) {
+          return 'Unable to contact admin - guild settings not found.';
+        }
+
+        // Send DM to admin
+        try {
+          const adminUser = await client.users.fetch(guildSettings.bot_added_by);
+          if (adminUser) {
+            await adminUser.send({
+              embeds: [{
+                title: '❓ User Question Forwarded',
+                description: `**User:** ${username} (<@${userId}>)\n**Question:** ${question}\n\n**Server:** ${guild?.name}`,
+                color: 0x3B82F6,
+                timestamp: new Date().toISOString(),
+                footer: {
+                  text: 'You can respond directly in the server or update the event details in the database.'
+                }
+              }]
+            });
+            
+            return `I don't have that information right now, but I've forwarded your question to the admin. They should get back to you soon! 📩`;
+          }
+        } catch (dmError) {
+          console.log('Could not send DM to admin:', dmError);
+        }
+
+        // Fallback: mention admin in the channel
+        return `I don't have that information. <@${guildSettings.bot_added_by}> could you help answer: "${question}"?`;
+      } catch (error) {
+        console.error('Error forwarding question:', error);
+        return 'I don\'t have that information right now. Please ask an admin directly.';
+      }
+    };
   }
 }

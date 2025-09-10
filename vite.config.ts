@@ -4,37 +4,33 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ command, mode }) => ({
+export default defineConfig({
   server: {
     host: "::",
     port: 8080,
   },
-  plugins: [
-    react(),
-    command === 'serve' && componentTagger(),
-  ].filter(Boolean),
+  plugins: [react(), componentTagger()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "@prompts": path.resolve(__dirname, "./src/prompts"),
     },
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    target: 'es2020',
+    target: 'esnext',
     rollupOptions: {
+      external: ['fs', 'path', 'crypto'],
       output: {
         manualChunks: undefined,
       },
-      external: ['fs', 'path', 'crypto']
     },
   },
   esbuild: {
-    target: 'es2020',
+    target: 'esnext',
   },
   optimizeDeps: {
     force: true,
   },
   clearScreen: false
-}));
+});
