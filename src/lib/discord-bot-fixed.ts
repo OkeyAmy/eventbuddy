@@ -85,6 +85,7 @@ export class EventBuddyBot {
   private debugLogging: boolean = process.env.DEBUG_LOGGING === 'true';
   private processedMessages: Set<string> = new Set(); // Track processed message IDs
   private responseTracker: Map<string, number> = new Map(); // Track response timestamps
+  private repliedMessageIds: Set<string> = new Set(); // Guard to ensure one reply per message
 
   private debugLog(label: string, data?: any) {
     if (!this.debugLogging) return;
@@ -593,6 +594,12 @@ export class EventBuddyBot {
     try {
       // Skip if message is too short or empty
       if (!message.content || message.content.length < 2) return;
+      
+      // Hard guard: if we've already replied to this specific message ID, do nothing
+      if (this.repliedMessageIds.has(message.id)) {
+        console.log(`🔁 Already replied to message ${message.id}, skipping.`);
+        return;
+      }
 
       // Check for recent response to prevent spam
       const responseKey = `${message.channelId}_${message.author.id}`;
@@ -783,6 +790,13 @@ Respond naturally based on context and user permissions.`;
       if (responseText && responseText.trim()) {
         // Update response tracker to prevent duplicates
         this.responseTracker.set(responseKey, currentTime);
+        // Mark this message as replied to
+        this.repliedMessageIds.add(message.id);
+        // Trim guard set to a reasonable size
+        if (this.repliedMessageIds.size > 500) {
+          const ids = Array.from(this.repliedMessageIds);
+          this.repliedMessageIds = new Set(ids.slice(-400));
+        }
         
         const sentMessage = await message.reply(responseText);
         console.log(`🤖 AI replied: "${responseText}"`);
@@ -1674,12 +1688,12 @@ ${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}
       const { data: events } = await this.supabase
         .from('events')
         .select('*')
-        .eq('host_discord_id', message.author.id)
         .eq('guild_id', message.guildId)
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .order('created_at', { ascending: false });
 
       if (!events || events.length === 0) {
-        return DISCORD_BOT_PROMPTS.NO_ACTIVE_EVENTS;
+        return '📅 There are no active events in this server right now.';
       }
 
       // Normalize event objects so templates can rely on `name` property
@@ -1688,7 +1702,8 @@ ${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}
         name: e.event_name ?? e.name ?? e.eventName ?? 'Unnamed Event'
       }));
 
-      return DISCORD_BOT_PROMPTS.ACTIVE_EVENTS_FOUND(normalized);
+      const list = normalized.map((e: any) => `• **${e.name}** (${e.status})`).join('\n');
+      return `📅 **Active events in this server (${normalized.length}):**\n\n${list}\n\nAsk about an event by name for details.`;
     } catch (error) {
       console.error('❌ Error getting active events:', error);
       return DISCORD_BOT_PROMPTS.ERROR_DATABASE;
