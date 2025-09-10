@@ -663,8 +663,8 @@ User ID: ${message.author.id}
 ${contextFromDB ? `\nChannel Context and History:\n${contextFromDB}\n` : ''}
 
 AVAILABLE FUNCTIONS:
-- Admin Only: create_event, update_event, get_event, delete_event, end_event, create_channel, archive_channel, delete_channel, rename_channel, create_text_channel, get_all_events
-- Regular Users: get_active_events, basic event info from "others" field
+- Admin Only: create_event, update_event, delete_event, end_event, create_channel, archive_channel, delete_channel, rename_channel, create_text_channel, get_all_events
+- Regular Users: get_active_events, get_event (read-only), basic event info from "others" field
 
 AUTO-FIND BEHAVIOR:
 - NEVER ask users for event IDs
@@ -860,7 +860,7 @@ Respond naturally based on context and user permissions.`;
 
   private async executeFunctionCall(functionName: string, args: any, message: Message): Promise<any> {
     // Check admin permissions for restricted functions
-    const adminOnlyFunctions = ['create_event', 'update_event', 'get_event', 'end_event', 'create_channel', 'archive_channel', 'delete_channel', 'rename_channel', 'create_text_channel'];
+    const adminOnlyFunctions = ['create_event', 'update_event', 'end_event', 'create_channel', 'archive_channel', 'delete_channel', 'rename_channel', 'create_text_channel'];
     const isAdmin = this.isServerOwner(message.author.id, message.guildId);
     
     if (adminOnlyFunctions.includes(functionName) && !isAdmin) {
@@ -1317,10 +1317,15 @@ ${event.others ? `📋 Additional Info: ${JSON.stringify(event.others)}` : ''}`;
       if (eventId) {
         query = query.eq('id', eventId);
       } else if (eventName) {
-        query = query.eq('event_name', eventName);
+        // Constrain by guild to avoid cross-server leaks
+        query = query.eq('event_name', eventName).eq('guild_id', message.guildId || '');
       } else {
-        // Auto-find user's most recent active event
-        query = query.eq('host_discord_id', message.author.id).eq('status', 'active').order('created_at', { ascending: false }).limit(1);
+        // Auto-find the server's most recent active event (public info)
+        query = query
+          .eq('guild_id', message.guildId || '')
+          .eq('status', 'active')
+          .order('created_at', { ascending: false })
+          .limit(1);
       }
 
       const { data: events, error } = await query;
@@ -1331,14 +1336,33 @@ ${event.others ? `📋 Additional Info: ${JSON.stringify(event.others)}` : ''}`;
         return "❌ No event found. Create an event first or specify the event name.";
       }
 
-      return `Event Details:
-📅 **${event.event_name}**
-📆 Date: ${event.event_date || 'Not set'}
-🕐 Time: ${event.event_time || 'Not set'}
-🎨 Theme: ${event.event_theme || 'No theme'}
-👥 Total Attendees: ${event.total_attendees || 0}
-📝 Status: ${event.status}
-${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}`;
+      // Extract additional (public) fields such as venue and end time from others JSON
+      const others: any = event?.others || {};
+      const othersObj = typeof others === 'string' ? (() => { try { return JSON.parse(others); } catch { return {}; } })() : others;
+
+      const pickValue = (obj: any, keys: string[]): string | undefined => {
+        for (const k of keys) {
+          const v = obj?.[k];
+          if (v !== undefined && v !== null && String(v).trim() !== '') return String(v);
+        }
+        return undefined;
+      };
+
+      const venue = pickValue(othersObj, ['venue', 'location', 'place', 'address']);
+      const endTime = pickValue(othersObj, ['end_time', 'endTime', 'ending_time', 'ends_at', 'endsAt']);
+      const startTimeFromOthers = pickValue(othersObj, ['start_time', 'startTime', 'starts_at', 'startsAt']);
+
+      const startTime = startTimeFromOthers || event.event_time || 'Not set';
+
+      const lines: string[] = [];
+      lines.push('Event Details:');
+      lines.push(`📅 **${event.event_name}**`);
+      lines.push(`📆 Date: ${event.event_date || 'Not set'}`);
+      lines.push(`🕐 Starts: ${startTime}${endTime ? `  •  Ends: ${endTime}` : ''}`);
+      lines.push(`🎨 Theme: ${event.event_theme || 'No theme'}`);
+      if (venue) lines.push(`📍 Venue: ${venue}`);
+      lines.push(`📝 Status: ${event.status}`);
+      return lines.join('\n');
     } catch (error) {
       console.error('❌ Error retrieving event:', error);
       throw error;
