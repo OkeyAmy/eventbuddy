@@ -83,6 +83,8 @@ export class EventBuddyBot {
   private guildOwners: Map<string, string> = new Map(); // guildId -> ownerId
   private conversationLogger: ConversationLogger;
   private debugLogging: boolean = process.env.DEBUG_LOGGING === 'true';
+  private processedMessages: Set<string> = new Set(); // Track processed message IDs
+  private responseTracker: Map<string, number> = new Map(); // Track response timestamps
 
   private debugLog(label: string, data?: any) {
     if (!this.debugLogging) return;
@@ -378,6 +380,22 @@ export class EventBuddyBot {
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot) return;
       
+      // Prevent duplicate processing of the same message
+      const messageKey = `${message.id}_${message.channelId}`;
+      if (this.processedMessages.has(messageKey)) {
+        console.log(`🔄 Skipping already processed message: ${message.id}`);
+        return;
+      }
+      
+      // Add to processed messages set
+      this.processedMessages.add(messageKey);
+      
+      // Clean up old processed messages (keep only last 100)
+      if (this.processedMessages.size > 100) {
+        const array = Array.from(this.processedMessages);
+        this.processedMessages = new Set(array.slice(-100));
+      }
+      
       console.log(`💬 Message received: "${message.content}" from ${message.author.username}`);
       await this.handleNaturalLanguageMessage(message);
     });
@@ -576,6 +594,17 @@ export class EventBuddyBot {
       // Skip if message is too short or empty
       if (!message.content || message.content.length < 2) return;
 
+      // Check for recent response to prevent spam
+      const responseKey = `${message.channelId}_${message.author.id}`;
+      const lastResponseTime = this.responseTracker.get(responseKey) || 0;
+      const currentTime = Date.now();
+      
+      // Prevent responses within 2 seconds of the last response
+      if (currentTime - lastResponseTime < 2000) {
+        console.log(`🚫 Preventing duplicate response for user ${message.author.username} (last response ${currentTime - lastResponseTime}ms ago)`);
+        return;
+      }
+
       console.log(`💬 Processing message: "${message.content}" from ${message.author.username} in ${message.guild?.name || 'DM'}`);
 
       // Log the user message first
@@ -627,7 +656,7 @@ User ID: ${message.author.id}
 ${contextFromDB ? `\nChannel Context and History:\n${contextFromDB}\n` : ''}
 
 AVAILABLE FUNCTIONS:
-- Admin Only: create_event, update_event, get_event, delete_event, end_event, create_channel, archive_channel, delete_channel, rename_channel, create_text_channel
+- Admin Only: create_event, update_event, get_event, delete_event, end_event, create_channel, archive_channel, delete_channel, rename_channel, create_text_channel, get_all_events
 - Regular Users: get_active_events, basic event info from "others" field
 
 AUTO-FIND BEHAVIOR:
@@ -640,6 +669,7 @@ STRICT ANTI-SPAM & DUPLICATE PREVENTION:
 - Only respond to legitimate event/channel management requests
 - NEVER send duplicate responses
 - Monitor conversation context to avoid redundant replies
+- Message ID: ${message.id} should only receive ONE response
 
 Respond naturally based on context and user permissions.`;
 
@@ -751,6 +781,9 @@ Respond naturally based on context and user permissions.`;
 
       // Send response and log it
       if (responseText && responseText.trim()) {
+        // Update response tracker to prevent duplicates
+        this.responseTracker.set(responseKey, currentTime);
+        
         const sentMessage = await message.reply(responseText);
         console.log(`🤖 AI replied: "${responseText}"`);
 
@@ -845,6 +878,8 @@ Respond naturally based on context and user permissions.`;
         return await this.getActiveEvents(message, args);
       case 'create_text_channel':
         return await this.executeCreateTextChannel(args, message.guildId);
+      case 'get_all_events':
+        return await this.getAllEvents(message, args);
       default:
         throw new Error(`Unknown function: ${functionName}`);
     }
@@ -1298,22 +1333,32 @@ ${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}
     const { eventId, eventName } = args;
     
     try {
+      console.log(`🗑️ Delete event request - ID: ${eventId}, Name: ${eventName}, User: ${message.author.username}`);
+      
       // Auto-find event if no ID provided
       let targetEventId = eventId;
       let targetEventName = eventName;
       
       if (!targetEventId && eventName) {
-        const { data: foundEvent } = await this.supabase
+        console.log(`🔍 Searching for event by name: ${eventName}`);
+        const { data: foundEvent, error: searchError } = await this.supabase
           .from('events')
           .select('id, event_name')
           .eq('event_name', eventName)
           .eq('host_discord_id', message.author.id)
           .single();
+        
+        if (searchError) {
+          console.log(`⚠️ Search error:`, searchError);
+        }
+        
         targetEventId = foundEvent?.id;
         targetEventName = foundEvent?.event_name;
+        console.log(`🔍 Found event by name: ID=${targetEventId}, Name=${targetEventName}`);
       } else if (!targetEventId) {
+        console.log(`🔍 Finding user's most recent active event`);
         // Find user's most recent active event
-        const { data: foundEvent } = await this.supabase
+        const { data: foundEvent, error: searchError } = await this.supabase
           .from('events')
           .select('id, event_name')
           .eq('host_discord_id', message.author.id)
@@ -1321,31 +1366,66 @@ ${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
+        
+        if (searchError) {
+          console.log(`⚠️ Search error:`, searchError);
+        }
+        
         targetEventId = foundEvent?.id;
         targetEventName = foundEvent?.event_name;
+        console.log(`🔍 Found recent event: ID=${targetEventId}, Name=${targetEventName}`);
       } else {
+        console.log(`🔍 Getting event name for confirmation: ${targetEventId}`);
         // Get event name for confirmation
-        const { data: foundEvent } = await this.supabase
+        const { data: foundEvent, error: searchError } = await this.supabase
           .from('events')
           .select('event_name')
           .eq('id', targetEventId)
           .single();
+        
+        if (searchError) {
+          console.log(`⚠️ Search error:`, searchError);
+        }
+        
         targetEventName = foundEvent?.event_name;
+        console.log(`🔍 Found event name: ${targetEventName}`);
       }
 
       if (!targetEventId) {
+        console.log(`❌ No event found to delete`);
         return "❌ No event found to delete. Create an event first or specify the event name.";
       }
 
+      console.log(`🗑️ Attempting to delete event: ID=${targetEventId}, Name=${targetEventName}`);
+      
       // Delete the event
-      const { error } = await this.supabase
+      const { error, data } = await this.supabase
         .from('events')
         .delete()
+        .eq('id', targetEventId)
+        .eq('host_discord_id', message.author.id); // Ensure user can only delete their own events
+
+      if (error) {
+        console.error('❌ Database deletion error:', error);
+        throw error;
+      }
+
+      console.log(`✅ Event deleted successfully:`, data);
+      
+      // Verify deletion by trying to find the event again
+      const { data: verificationCheck } = await this.supabase
+        .from('events')
+        .select('id, event_name')
         .eq('id', targetEventId);
+      
+      if (verificationCheck && verificationCheck.length > 0) {
+        console.warn(`⚠️ Event still exists after deletion attempt:`, verificationCheck);
+        return `⚠️ Deletion may have failed. Event "${targetEventName}" may still exist.`;
+      } else {
+        console.log(`✅ Deletion verified - event no longer exists in database`);
+      }
 
-      if (error) throw error;
-
-      return `✅ Event "${targetEventName}" has been permanently deleted.`;
+      return `✅ Event "${targetEventName}" has been permanently deleted and verified.`;
     } catch (error) {
       console.error('❌ Error deleting event:', error);
       throw error;
@@ -1565,6 +1645,30 @@ ${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}
   }
 
   // New function implementations for AI
+  private async getAllEvents(message: Message, args: any) {
+    try {
+      console.log(`🔍 Getting ALL events for guild ${message.guildId}`);
+      const { data: events } = await this.supabase
+        .from('events')
+        .select('*')
+        .eq('guild_id', message.guildId)
+        .order('created_at', { ascending: false });
+
+      if (!events || events.length === 0) {
+        return "📅 **No events found in this server**\n\nThere are currently no events in the database for this server.";
+      }
+
+      const eventList = events.map(e => 
+        `• **${e.event_name}** (${e.status}) - Created by <@${e.host_discord_id}> on ${new Date(e.created_at as string).toLocaleDateString()}`
+      ).join('\n');
+
+      return `📅 **All Events in Server (${events.length} total):**\n\n${eventList}\n\n*This shows ALL events regardless of status or owner - useful for debugging.*`;
+    } catch (error) {
+      console.error('❌ Error getting all events:', error);
+      return "❌ Error retrieving events from database.";
+    }
+  }
+
   private async getActiveEvents(message: Message, args: any) {
     try {
       const { data: events } = await this.supabase
