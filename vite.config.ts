@@ -16,6 +16,23 @@ export default defineConfig(({ command, mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@prompts": path.resolve(__dirname, "./src/prompts"),
     },
+  },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    target: 'es2020',
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+      },
+    },
+  },
+  esbuild: {
+    target: 'es2020',
+  },
+  optimizeDeps: {
+    force: true,
   },
 }));
