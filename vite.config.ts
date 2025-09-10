@@ -27,6 +27,7 @@ export default defineConfig(({ command, mode }) => ({
       output: {
         manualChunks: undefined,
       },
+      external: ['fs', 'path', 'crypto']
     },
   },
   esbuild: {
@@ -35,4 +36,5 @@ export default defineConfig(({ command, mode }) => ({
   optimizeDeps: {
     force: true,
   },
+  clearScreen: false
 }));
