@@ -894,6 +894,8 @@ Respond naturally based on context and user permissions.`;
         return await this.executeCreateTextChannel(args, message.guildId);
       case 'get_all_events':
         return await this.getAllEvents(message, args);
+      case 'forward_question_to_admin':
+        return await this.forwardQuestionToAdmin(message, args);
       default:
         throw new Error(`Unknown function: ${functionName}`);
     }
@@ -1443,6 +1445,74 @@ ${event.others ? `\n📋 Additional Info: ${JSON.stringify(event.others)}` : ''}
     } catch (error) {
       console.error('❌ Error deleting event:', error);
       throw error;
+    }
+  }
+
+  private async forwardQuestionToAdmin(message: Message, args: any) {
+    const { question, userId, username } = args || {};
+    try {
+      // Resolve admin target: guild_settings.bot_added_by -> guild owner fallback
+      let adminId: string | undefined;
+      if (message.guildId) {
+        try {
+          const { data: guildSettings } = await this.supabase
+            .from('guild_settings')
+            .select('bot_added_by')
+            .eq('guild_id', message.guildId)
+            .single();
+          adminId = guildSettings?.bot_added_by as string | undefined;
+        } catch {}
+
+        if (!adminId) {
+          adminId = this.guildOwners.get(message.guildId);
+          if (!adminId) {
+            try {
+              const guild = await this.client.guilds.fetch(message.guildId);
+              adminId = guild?.ownerId;
+            } catch {}
+          }
+        }
+      }
+
+      if (!adminId) {
+        return "I couldn't find an admin to forward this to right now.";
+      }
+
+      // Build DM embed
+      const embed = {
+        title: '❓ User Question Forwarded',
+        description: `**User:** ${username || message.author.username} (<@${userId || message.author.id}>)\n**Question:** ${question || message.content}\n\n**Server:** ${message.guild?.name || 'Unknown'}`,
+        color: 0x3B82F6,
+        timestamp: new Date().toISOString(),
+        footer: { text: 'Reply in the server or update event details in the database.' }
+      } as any;
+
+      let dmSent = false;
+      try {
+        const adminUser = await this.client.users.fetch(adminId);
+        if (adminUser) {
+          await adminUser.send({ embeds: [embed] });
+          dmSent = true;
+        }
+      } catch (dmError) {
+        console.log('Could not send DM to admin:', dmError);
+      }
+
+      if (!dmSent) {
+        try {
+          const chan: any = message.channel as any;
+          if (chan && typeof chan.send === 'function') {
+            await chan.send(`📩 <@${adminId}>, user <@${userId || message.author.id}> asked: "${(question || message.content).slice(0, 300)}"`);
+          }
+        } catch {}
+      }
+
+      return dmSent
+        ? "I've forwarded your question to the admin. They’ll get back to you soon."
+        : `I couldn't DM the admin, but I've mentioned them here. <@${adminId}>`;
+    } catch (error) {
+      console.error('Error forwarding question:', error);
+      return 'I\'m having trouble forwarding your question. Please ping an admin directly.';
     }
   }
 
