@@ -855,14 +855,22 @@ Respond naturally based on context and user permissions.`;
     } catch (error) {
       console.error('❌ Error handling natural language message:', error);
       console.error('❌ Full error details:', {
-        message: error.message,
-        stack: error.stack,
+        message: (error as any)?.message,
+        stack: (error as any)?.stack,
         user: message.author.username,
         content: message.content.substring(0, 100)
       });
-      // Send a friendly error message to the user
+      // Send a contextual error message to the user when available
       try {
-        await message.reply('❌ Sorry, I encountered an error while processing your message. Please try again!');
+        const errMsg = (error as any)?.message || '';
+        const isFriendly = errMsg.includes("I'm getting a bit busy") ||
+          errMsg.includes('AI service is temporarily unavailable') ||
+          errMsg.includes('Request timed out') ||
+          errMsg.includes('Temporary service issue');
+        const replyText = isFriendly
+          ? errMsg
+          : '❌ Sorry, I encountered an error while processing your message. Please try again!';
+        await message.reply(replyText);
       } catch (replyError) {
         console.error('❌ Failed to send error message:', replyError);
       }
