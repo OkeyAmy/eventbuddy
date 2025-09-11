@@ -593,6 +593,15 @@ export class EventBuddyBot {
 
   private async handleNaturalLanguageMessage(message: Message) {
     let typingInterval: any;
+    
+    // Helper functions for typing indicator
+    const stopTyping = () => {
+      if (typingInterval) {
+        try { clearInterval(typingInterval); } catch {}
+        typingInterval = undefined;
+      }
+    };
+    
     try {
       // Skip if message is too short or empty
       if (!message.content || message.content.length < 2) return;
@@ -616,15 +625,17 @@ export class EventBuddyBot {
 
       console.log(`💬 Processing message: "${message.content}" from ${message.author.username} in ${message.guild?.name || 'DM'}`);
 
-      // Show typing indicator while processing and refresh every ~8s (Discord shows typing for ~10s)
-      try {
-        if (message.channel.isTextBased() && typeof (message.channel as any).sendTyping === 'function') {
-          await (message.channel as any).sendTyping();
-          typingInterval = setInterval(() => {
-            (message.channel as any).sendTyping().catch(() => {});
-          }, 8000);
-        }
-      } catch {}
+      // Helper function to start typing indicator
+      const startTyping = () => {
+        try {
+          if (message.channel.isTextBased() && typeof (message.channel as any).sendTyping === 'function') {
+            (message.channel as any).sendTyping();
+            typingInterval = setInterval(() => {
+              (message.channel as any).sendTyping().catch(() => {});
+            }, 8000);
+          }
+        } catch {}
+      };
 
       // Log the user message first
       if (message.guildId) {
@@ -717,6 +728,9 @@ Respond naturally based on context and user permissions.`;
 
       console.log(`🧠 Generating AI response with ${this.functionDeclarations.length} available functions`);
       console.log(`🎯 Message analysis: "${message.content.substring(0, 50)}${message.content.length > 50 ? '...' : ''}"`);
+
+      // Start typing indicator since we're about to generate a response
+      startTyping();
 
       // Generate response with function calling using rate limiter
       this.debugLog('generateContent.request', { model: 'gemini-2.5-flash', contentsLength: contents.length, sampleContents: contents.slice(0,2) });
@@ -849,6 +863,9 @@ Respond naturally based on context and user permissions.`;
       } else {
         console.log(`🤐 AI chose not to respond to: "${message.content}"`);
         
+        // Stop typing indicator since we're not responding
+        stopTyping();
+        
         // Still log the message for learning purposes but mark as no response
         if (message.guildId) {
           await this.conversationLogger.logConversation({
@@ -909,9 +926,7 @@ Respond naturally based on context and user permissions.`;
       }
     } finally {
       // Stop typing indicator
-      if (typingInterval) {
-        try { clearInterval(typingInterval); } catch {}
-      }
+      stopTyping();
     }
   }
 
