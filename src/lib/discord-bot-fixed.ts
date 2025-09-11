@@ -884,7 +884,8 @@ Respond naturally based on context and user permissions.`;
         const isFriendly = errMsg.includes("I'm getting a bit busy") ||
           errMsg.includes('AI service is temporarily unavailable') ||
           errMsg.includes('Request timed out') ||
-          errMsg.includes('Temporary service issue');
+          errMsg.includes('Temporary service issue') ||
+          errMsg.includes('Please try again');
         
         let replyText: string;
         if (isFriendly) {
