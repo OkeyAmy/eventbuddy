@@ -18,6 +18,7 @@ import {
 } from 'discord.js';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI, Content, FunctionDeclaration, GenerativeModel, SchemaType, Part } from '@google/generative-ai';
+import { aiIntegration } from './ai-integration';
 import { DISCORD_BOT_PROMPTS } from '../prompts/discord-bot-prompts';
 import { ENHANCED_DISCORD_BOT_PROMPTS } from '../prompts/enhanced-discord-bot-prompts';
 import { ConversationLogger } from './conversation-logger';
@@ -706,9 +707,14 @@ Respond naturally based on context and user permissions.`;
       console.log(`🧠 Generating AI response with ${this.functionDeclarations.length} available functions`);
       console.log(`🎯 Message analysis: "${message.content.substring(0, 50)}${message.content.length > 50 ? '...' : ''}"`);
 
-      // Generate response with function calling
+      // Generate response with function calling using rate limiter
       this.debugLog('generateContent.request', { model: 'gemini-2.5-flash', contentsLength: contents.length, sampleContents: contents.slice(0,2) });
-      let result = await model.generateContent({ contents });
+      let result = await aiIntegration.generateContentWithRateLimit(model, { contents }, {
+        guildId: message.guild?.id,
+        userId: message.author.id,
+        prompt: message.content,
+        context: { messageId: message.id, channelId: message.channel.id }
+      });
       let response = result.response;
       this.debugLog('generateContent.response', { responsePreview: typeof response?.text === 'function' ? response.text().slice(0,200) : null, hasFunctionCalls: !!response.functionCalls });
 
@@ -778,7 +784,12 @@ Respond naturally based on context and user permissions.`;
           })) as Content[]
         ];
 
-        result = await model.generateContent({ contents: finalContents });
+        result = await aiIntegration.generateContentWithRateLimit(model, { contents: finalContents }, {
+          guildId: message.guild?.id,
+          userId: message.author.id,
+          prompt: message.content + '_followup',
+          context: { messageId: message.id, channelId: message.channel.id, followup: true }
+        });
         response = result.response;
       }
 
@@ -1198,8 +1209,16 @@ Respond naturally based on context and user permissions.`;
   private async generateAIResponse(message: string, context: any): Promise<AIResponse> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
-    const result = await model.generateContent(`You are EventBuddy, respond helpfully to: "${message}"`);
-    const response = await result.response;
+    const result = await aiIntegration.generateContentWithRateLimit(model, 
+      { contents: [{ role: 'user', parts: [{ text: `You are EventBuddy, respond helpfully to: "${message}"` }] }] },
+      {
+        guildId: context.guildId,
+        userId: context.userId,
+        prompt: message,
+        context: context
+      }
+    );
+    const response = result.response;
     
     return {
       text: response.text(),
