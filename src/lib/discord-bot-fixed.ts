@@ -592,6 +592,7 @@ export class EventBuddyBot {
   }
 
   private async handleNaturalLanguageMessage(message: Message) {
+    let typingInterval: any;
     try {
       // Skip if message is too short or empty
       if (!message.content || message.content.length < 2) return;
@@ -614,6 +615,16 @@ export class EventBuddyBot {
       }
 
       console.log(`💬 Processing message: "${message.content}" from ${message.author.username} in ${message.guild?.name || 'DM'}`);
+
+      // Show typing indicator while processing and refresh every ~8s (Discord shows typing for ~10s)
+      try {
+        if (message.channel.isTextBased() && typeof (message.channel as any).sendTyping === 'function') {
+          await (message.channel as any).sendTyping();
+          typingInterval = setInterval(() => {
+            (message.channel as any).sendTyping().catch(() => {});
+          }, 8000);
+        }
+      } catch {}
 
       // Log the user message first
       if (message.guildId) {
@@ -860,19 +871,45 @@ Respond naturally based on context and user permissions.`;
         user: message.author.username,
         content: message.content.substring(0, 100)
       });
+      // Prevent duplicate replies on the same message
+      if (this.repliedMessageIds.has(message.id)) {
+        return;
+      }
+
       // Send a contextual error message to the user when available
       try {
         const errMsg = (error as any)?.message || '';
+        console.log(`🔍 Processing error message: "${errMsg}"`);
+        
         const isFriendly = errMsg.includes("I'm getting a bit busy") ||
           errMsg.includes('AI service is temporarily unavailable') ||
           errMsg.includes('Request timed out') ||
           errMsg.includes('Temporary service issue');
-        const replyText = isFriendly
-          ? errMsg
-          : '❌ Sorry, I encountered an error while processing your message. Please try again!';
+        
+        let replyText: string;
+        if (isFriendly) {
+          replyText = errMsg;
+          console.log(`✅ Using friendly error message: "${replyText}"`);
+        } else {
+          replyText = '❌ Sorry, I encountered an error while processing your message. Please try again!';
+          console.log(`⚠️ Using generic error message for: "${errMsg}"`);
+        }
+        
+        // Mark as replied before sending to avoid race with any late success path
+        this.repliedMessageIds.add(message.id);
+        if (this.repliedMessageIds.size > 500) {
+          const ids = Array.from(this.repliedMessageIds);
+          this.repliedMessageIds = new Set(ids.slice(-400));
+        }
         await message.reply(replyText);
+        console.log(`📤 Error reply sent to user: "${replyText}"`);
       } catch (replyError) {
         console.error('❌ Failed to send error message:', replyError);
+      }
+    } finally {
+      // Stop typing indicator
+      if (typingInterval) {
+        try { clearInterval(typingInterval); } catch {}
       }
     }
   }
