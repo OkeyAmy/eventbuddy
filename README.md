@@ -93,6 +93,8 @@
 /analytics event_name: "Tech Conference 2025"
 ```
 
+> ⚠️ **Security Note**: Before using in production, ensure you've moved all hardcoded credentials to environment variables. See the [Security Audit Report](SECURITY_AUDIT_REPORT_UPDATED.md) for details.
+
 ### 3️⃣ Watch the Magic Happen
 
 - ✅ Attendees get personalized welcome messages
@@ -472,6 +474,17 @@ We welcome contributions! Here's how you can help:
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
+
+## 🔒 Security Notice
+
+**Important**: This repository contains some hardcoded credentials that need to be moved to environment variables for production use. See the [Security Audit Report](SECURITY_AUDIT_REPORT_UPDATED.md) for details.
+
+### 🛡️ Security Best Practices
+- Always use environment variables for sensitive data
+- Never commit `.env.local` or `.env` files
+- Rotate API keys and tokens regularly
+- Use HTTPS in production
+- Implement proper access controls
 
 ## 🆘 Support
 
