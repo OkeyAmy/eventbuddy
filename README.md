@@ -7,6 +7,8 @@
 ![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)
 ![Discord.js](https://img.shields.io/badge/Discord.js-v14-7289da?style=for-the-badge&logo=discord)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-18+-green?style=for-the-badge&logo=node.js)
+![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)
 
 **Transform Discord servers into intelligent event management hubs with AI-powered conversations and automated networking.**
 
@@ -101,6 +103,37 @@
 - ✅ AI facilitates networking conversations
 - ✅ Post-event channels created automatically
 - ✅ Real-time engagement analytics
+
+## 📊 Demo
+
+### 🎬 See EventBuddy in Action
+
+```bash
+# 1. Import attendees from CSV
+/import_event event_name: "Tech Conference 2025" csv_file: [upload CSV]
+
+# 2. AI handles attendee questions naturally
+User: "What time does the keynote start?"
+Bot: "The keynote starts at 9:00 AM in the main auditorium. I'll send you a reminder 30 minutes before!"
+
+# 3. AI facilitates networking
+User: "I'm looking to connect with other developers"
+Bot: "Great! I'd recommend connecting with @JaneSmith who's also a developer and @MikeJohnson who works in your field. They're both attending the conference!"
+
+# 4. Get real-time analytics
+/analytics event_name: "Tech Conference 2025"
+# Returns: Engagement rates, popular topics, networking connections, etc.
+```
+
+### 🎯 Key Demo Features
+
+| Feature | What You'll See |
+|---------|----------------|
+| **Smart CSV Import** | Instant attendee data processing and welcome messages |
+| **Natural AI Conversations** | Human-like responses to event questions |
+| **Intelligent Networking** | AI suggests relevant connections based on profiles |
+| **Real-time Analytics** | Live engagement metrics and insights |
+| **Automated Channel Management** | Post-event networking channels created automatically |
 
 ---
 
@@ -508,16 +541,55 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Check if bot token is correct
 - Verify bot has necessary permissions
 - Ensure bot is online in Discord
+- Check if bot has "Message Content Intent" enabled
 
 **CSV import failing:**
-- Check CSV format matches requirements
+- Check CSV format matches requirements (Name, Email, Discord Handle, RSVP Status)
 - Verify you have admin permissions
 - Check file size (max 10MB)
+- Ensure CSV is properly formatted (no extra spaces, correct headers)
 
 **AI not working:**
 - Verify Gemini API key is valid
 - Check API quotas and limits
-- Review error logs
+- Review error logs in console
+- Test with simple commands first
+
+**Database connection issues:**
+- Verify Supabase URL and keys are correct
+- Check if database schema is applied
+- Ensure service role key has proper permissions
+- Check Supabase project status
+
+**OAuth redirect errors:**
+- Verify redirect URI matches exactly in Discord Developer Portal
+- Check if using HTTPS in production
+- Ensure client ID and secret are correct
+- Clear browser cache and try again
+
+#### Debug Commands
+
+```bash
+# Test Discord bot connection
+pnpm test:discord
+
+# Check bot status
+pnpm bot:status:local
+
+# Clear and re-register commands
+pnpm clear:commands
+
+# View detailed logs
+DEBUG_LOGGING=true pnpm dev
+```
+
+#### Getting More Help
+
+1. **Check the logs** - Both frontend and backend terminals show detailed error messages
+2. **Verify environment variables** - Ensure all required variables are set correctly
+3. **Test step by step** - Start with basic bot connection, then add features
+4. **Check permissions** - Ensure bot has all required Discord permissions
+5. **Review documentation** - Check Discord.js and Supabase docs for specific issues
 
 ---
 
@@ -537,8 +609,39 @@ EventBuddy is designed to achieve these key performance indicators:
 
 <div align="center">
 
+## 📝 Changelog
+
+### [1.0.0] - 2025-09-13
+
+#### Added
+- 🤖 AI-powered Discord bot for event management
+- 📊 CSV import functionality for attendee data
+- 🧠 Natural language processing with Google Gemini AI
+- 📈 Real-time analytics and engagement tracking
+- 🔗 Intelligent networking suggestions
+- 🛡️ Privacy-first admin controls
+- ⚡ Rate limiting and circuit breaker patterns
+- 🎨 Modern React frontend with Tailwind CSS
+- 🗄️ Supabase database integration
+- 🚀 Multiple deployment options (Render, Railway, Vercel)
+
+#### Security
+- 🔒 Comprehensive security audit completed
+- 🛡️ Environment variable configuration
+- 📋 Security best practices documentation
+- ⚠️ Security notices and warnings added
+
+#### Documentation
+- 📖 Complete setup and usage guides
+- 🎯 Quick start instructions
+- 🔧 Troubleshooting section
+- 📊 API reference documentation
+- 🎬 Demo examples and use cases
+
+---
+
 **Made with ❤️ for the event community**
 
-[⭐ Star this repo](https://github.com/yourusername/eventbuddy) • [🐛 Report a bug](https://github.com/yourusername/eventbuddy/issues) • [💡 Request a feature](https://github.com/yourusername/eventbuddy/issues)
+[⭐ Star this repo](https://github.com/OkeyAmy/buddy-event-spark) • [🐛 Report a bug](https://github.com/OkeyAmy/buddy-event-spark/issues) • [💡 Request a feature](https://github.com/OkeyAmy/buddy-event-spark/issues)
 
 </div>
