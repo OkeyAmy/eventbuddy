@@ -1,7 +1,0 @@
-project_id = "tvewdfvhlvlflpqanora"
-
-[functions.discord-analytics]
-verify_jwt = false
-
-[functions.discord-dm-analytics]
-verify_jwt = false
