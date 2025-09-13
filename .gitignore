@@ -47,6 +47,80 @@ Thumbs.db
 *.local
 
 
-# Railway
+# Security-sensitive files
+supabase/config.toml
+supabase/.env*
+supabase/secrets/
+
+# Deployment guides (move to private docs)
+deployment_guide.md
+PRODUCTION_GUIDE.md
+RAILWAY_DEPLOYMENT.md
+LOCAL_SETUP.md
+DISCORD_BOT_FIXES.md
+
+# Test files with sensitive data
+test-deployment.sh
+test-*.sh
+*test*.js
+
+# Docker files (if they contain sensitive info)
+Dockerfile
+docker-compose.yml
+docker-entrypoint.sh
+
+# Environment files
+.env*
+!.env.example
+config.local.*
+secrets/
+
+# API keys and tokens
+*key*
+*secret*
+*token*
+*password*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs (may contain sensitive info)
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# IDE files (may contain sensitive info)
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Build artifacts (may contain sensitive info)
+dist/
+build/
+.next/
+out/
+
+# Railway specific
 railway.toml
 RAILWAY_DEPLOYMENT.md
+
+# Documentation with sensitive info
+*_GUIDE.md
+*_SETUP.md
+*_DEPLOYMENT.md
