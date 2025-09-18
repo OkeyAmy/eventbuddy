@@ -95,7 +95,7 @@
 /analytics event_name: "Tech Conference 2025"
 ```
 
-> ⚠️ **Security Note**: Before using in production, ensure you've moved all hardcoded credentials to environment variables. See the [Security Audit Report](SECURITY_AUDIT_REPORT_UPDATED.md) for details.
+
 
 ### 3️⃣ Watch the Magic Happen
 
