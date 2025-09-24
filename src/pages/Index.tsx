@@ -124,6 +124,17 @@ const Index = () => {
             <p className="text-white/70 text-sm md:text-base font-sans leading-relaxed">Answers event questions naturally, stays silent otherwise</p>
           </div>
         </div>
+        
+        {/* Footer */}
+        <div className="mt-16 text-center text-white/60 font-sans">
+          <a href="/terms" className="text-white/60 hover:text-white/80 transition-colors duration-200 mx-3">
+            Terms of Service
+          </a>
+          <span className="mx-2">·</span>
+          <a href="/privacy" className="text-white/60 hover:text-white/80 transition-colors duration-200 mx-3">
+            Privacy Policy
+          </a>
+        </div>
         </div>
     </div>
   );
