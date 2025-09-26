@@ -6,6 +6,7 @@ import Prism from '@/components/ui/prism';
 const Index = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [email, setEmail] = useState('');
+  const [showDemoPanel, setShowDemoPanel] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [submitMessage, setSubmitMessage] = useState('');
 
@@ -77,7 +78,6 @@ const Index = () => {
     e.preventDefault();
     if (!email) return;
     setSubmitStatus('loading');
-    setSubmitMessage('Sending...');
 
     try {
       const response = await fetch('/api/submit-email', {
@@ -97,20 +97,15 @@ const Index = () => {
 
       if (response.ok && data?.success) {
         setSubmitStatus('success');
-        setSubmitMessage("You're booked! We'll email you shortly.");
+        setSubmitMessage("Perfect! Check your email - I'll reach out within 48hrs with a private demo link.");
         setEmail('');
       } else {
         setSubmitStatus('error');
-        setSubmitMessage(data?.message || 'Something went wrong. Please try again.');
+        setSubmitMessage('Something went wrong. Please try again.');
       }
     } catch (error) {
       setSubmitStatus('error');
       setSubmitMessage('Network error. Please try again.');
-    } finally {
-      setTimeout(() => {
-        setSubmitStatus('idle');
-        setSubmitMessage('');
-      }, 4500);
     }
   };
 
@@ -184,39 +179,14 @@ const Index = () => {
             )}
           </button>
           
-          {/* Secondary CTA - Lead capture */}
+          {/* Secondary CTA - Demo button */}
           <div className="text-white/60 text-sm">or</div>
-          
-          <form onSubmit={handleEmailSubmit} className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-stretch sm:items-center">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="your@email.com"
-              className="px-4 py-3 rounded-full bg-white/10 border border-white/20 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent backdrop-blur-sm flex-1 min-w-0"
-              required
-            />
-            <button
-              type="submit"
-              disabled={submitStatus === 'loading'}
-              className={`px-6 py-3 rounded-full font-medium transition-all duration-200 whitespace-nowrap backdrop-blur-sm border border-white/20 flex items-center justify-center ${submitStatus === 'success' ? 'bg-green-500 text-white' : submitStatus === 'error' ? 'bg-red-500 text-white' : 'bg-white/20 hover:bg-white/30 text-white'}`}
-            >
-              {submitStatus === 'loading' ? (
-                <span className="inline-flex items-center gap-2">
-                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Sending...
-                </span>
-              ) : submitStatus === 'success' ? '✓ Booked' : submitStatus === 'error' ? 'Try Again' : 'Get Demo'}
-            </button>
-            {submitMessage && (
-              <div className={`text-sm sm:ml-2 mt-1 sm:mt-0 ${submitStatus === 'success' ? 'text-green-300' : submitStatus === 'error' ? 'text-red-300' : 'text-white/70'}`}>
-                {submitMessage}
-              </div>
-            )}
-          </form>
+          <button
+            onClick={() => { setShowDemoPanel(true); setSubmitStatus('idle'); setSubmitMessage(''); }}
+            className="px-6 py-3 rounded-full font-medium transition-all duration-200 whitespace-nowrap backdrop-blur-sm border border-white/20 bg-white/20 hover:bg-white/30 text-white w-full sm:w-auto"
+          >
+            Get Demo
+          </button>
         </div>
 
         {/* Trust signals */}
@@ -333,6 +303,57 @@ const Index = () => {
           </a>
         </div>
       </div>
+
+      {/* Demo Panel (modal) */}
+      {showDemoPanel && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowDemoPanel(false)} />
+          <div className="relative z-50 w-full max-w-md rounded-2xl border border-white/10 bg-white/10 backdrop-blur-xl p-6 text-left shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white text-lg font-semibold">Request a demo</h3>
+              <button onClick={() => setShowDemoPanel(false)} className="text-white/70 hover:text-white text-xl leading-none">×</button>
+            </div>
+
+            {submitStatus === 'success' ? (
+              <div className="text-white/90">
+                <p className="mb-4">Check your email. I’ll reach out within 48hrs.</p>
+                <button
+                  onClick={() => { setShowDemoPanel(false); setSubmitStatus('idle'); }}
+                  className="px-5 py-2 rounded-full bg-white/20 hover:bg-white/30 text-white w-full"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleEmailSubmit} className="space-y-3">
+                <p className="text-white/80 text-sm">Drop your email. I’ll follow up personally.</p>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  className="px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent backdrop-blur-sm w-full"
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={submitStatus === 'loading'}
+                  className="w-full px-5 py-3 rounded-full font-semibold transition-all duration-200 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
+                >
+                  {submitStatus === 'loading' ? (
+                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    'Request Demo'
+                  )}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,0 +1,60 @@
+[1mdiff --git a/src/pages/api/submit-email.ts b/src/pages/api/submit-email.ts[m
+[1mindex 249226d..401e470 100644[m
+[1m--- a/src/pages/api/submit-email.ts[m
+[1m+++ b/src/pages/api/submit-email.ts[m
+[36m@@ -43,8 +43,14 @@[m [masync function sendViaWeb3Forms(emailData: any) {[m
+   try {[m
+     console.log('🔄 Sending via Web3Forms backup...');[m
+ [m
+[32m+[m[32m    const web3FormsAccessKey = process.env.WEB3FORMS_ACCESS_KEY;[m
+[32m+[m[32m    if (!web3FormsAccessKey) {[m
+[32m+[m[32m      console.warn('WEB3FORMS_ACCESS_KEY not set; skipping Web3Forms backup send.');[m
+[32m+[m[32m      return { success: false, error: 'WEB3FORMS not configured' };[m
+[32m+[m[32m    }[m
+[32m+[m
+     const web3FormsData = {[m
+[31m-      access_key: process.env.WEB3FORMS_ACCESS_KEY || 'c06ba29a-8f7c-463b-b639-110f51bfbefa',[m
+[32m+[m[32m      access_key: web3FormsAccessKey,[m
+       subject: '🚀 New EventBuddy Demo Request',[m
+       from_name: 'EventBuddy Lead System',[m
+       email: 'amaobiokeoma@gmail.com',[m
+[36m@@ -98,8 +104,14 @@[m [masync function sendUserConfirmationViaWeb3Forms(userEmail: string) {[m
+   try {[m
+     console.log('📧 Sending user confirmation via Web3Forms...');[m
+ [m
+[32m+[m[32m    const web3FormsAccessKey = process.env.WEB3FORMS_ACCESS_KEY;[m
+[32m+[m[32m    if (!web3FormsAccessKey) {[m
+[32m+[m[32m      console.warn('WEB3FORMS_ACCESS_KEY not set; skipping user confirmation via Web3Forms.');[m
+[32m+[m[32m      return { success: false, error: 'WEB3FORMS not configured' };[m
+[32m+[m[32m    }[m
+[32m+[m
+     const confirmationData = {[m
+[31m-      access_key: process.env.WEB3FORMS_ACCESS_KEY || 'c06ba29a-8f7c-463b-b639-110f51bfbefa',[m
+[32m+[m[32m      access_key: web3FormsAccessKey,[m
+       subject: "✅ Demo request received - I'll reach out personally within 48hrs",[m
+       from_name: 'EventBuddy Team',[m
+       email: userEmail,[m
+[36m@@ -209,14 +221,21 @@[m [mexport default async function handler(req: NextApiRequest, res: NextApiResponse)[m
+     try {[m
+       console.log('🚀 Attempting Mailgun first...');[m
+ [m
+[32m+[m[32m      const mailgunApiKey = process.env.MAILGUN_API_KEY;[m
+[32m+[m[32m      const mailgunDomain = process.env.MAILGUN_DOMAIN; // e.g. sandboxXXXX.mailgun.org or your custom domain[m
+[32m+[m
+[32m+[m[32m      if (!mailgunApiKey || !mailgunDomain) {[m
+[32m+[m[32m        throw new Error('Mailgun not configured: set MAILGUN_API_KEY and MAILGUN_DOMAIN');[m
+[32m+[m[32m      }[m
+[32m+[m
+       const mailgun = new Mailgun(FormData);[m
+       const mg = mailgun.client({[m
+         username: 'api',[m
+[31m-        key: process.env.MAILGUN_API_KEY || '3ed9b4dd004556f4529149900f5ea837-e1076420-6879edb6',[m
+[32m+[m[32m        key: mailgunApiKey,[m
+         url: 'https://api.mailgun.net'[m
+       });[m
+ [m
+[31m-      const domain = 'sandbox188e8c1944334bc5b010088a68147771.mailgun.org';[m
+[32m+[m[32m      const domain = mailgunDomain;[m
+       const targetEmail = forwardTo || 'amaobiokeoma@gmail.com';[m
+ [m
+       // Notification email to you[m

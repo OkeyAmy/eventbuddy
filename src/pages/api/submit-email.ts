@@ -43,8 +43,14 @@ async function sendViaWeb3Forms(emailData: any) {
   try {
     console.log('🔄 Sending via Web3Forms backup...');
 
+    const web3FormsAccessKey = process.env.WEB3FORMS_ACCESS_KEY;
+    if (!web3FormsAccessKey) {
+      console.warn('WEB3FORMS_ACCESS_KEY not set; skipping Web3Forms backup send.');
+      return { success: false, error: 'WEB3FORMS not configured' };
+    }
+
     const web3FormsData = {
-      access_key: process.env.WEB3FORMS_ACCESS_KEY || 'c06ba29a-8f7c-463b-b639-110f51bfbefa',
+      access_key: web3FormsAccessKey,
       subject: '🚀 New EventBuddy Demo Request',
       from_name: 'EventBuddy Lead System',
       email: 'amaobiokeoma@gmail.com',
@@ -98,8 +104,14 @@ async function sendUserConfirmationViaWeb3Forms(userEmail: string) {
   try {
     console.log('📧 Sending user confirmation via Web3Forms...');
 
+    const web3FormsAccessKey = process.env.WEB3FORMS_ACCESS_KEY;
+    if (!web3FormsAccessKey) {
+      console.warn('WEB3FORMS_ACCESS_KEY not set; skipping user confirmation via Web3Forms.');
+      return { success: false, error: 'WEB3FORMS not configured' };
+    }
+
     const confirmationData = {
-      access_key: process.env.WEB3FORMS_ACCESS_KEY || 'c06ba29a-8f7c-463b-b639-110f51bfbefa',
+      access_key: web3FormsAccessKey,
       subject: "✅ Demo request received - I'll reach out personally within 48hrs",
       from_name: 'EventBuddy Team',
       email: userEmail,
@@ -209,14 +221,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       console.log('🚀 Attempting Mailgun first...');
 
+      const mailgunApiKey = process.env.MAILGUN_API_KEY;
+      const mailgunDomain = process.env.MAILGUN_DOMAIN; // e.g. sandboxXXXX.mailgun.org or your custom domain
+
+      if (!mailgunApiKey || !mailgunDomain) {
+        throw new Error('Mailgun not configured: set MAILGUN_API_KEY and MAILGUN_DOMAIN');
+      }
+
       const mailgun = new Mailgun(FormData);
       const mg = mailgun.client({
         username: 'api',
-        key: process.env.MAILGUN_API_KEY || '3ed9b4dd004556f4529149900f5ea837-e1076420-6879edb6',
+        key: mailgunApiKey,
         url: 'https://api.mailgun.net'
       });
 
-      const domain = 'sandbox188e8c1944334bc5b010088a68147771.mailgun.org';
+      const domain = mailgunDomain;
       const targetEmail = forwardTo || 'amaobiokeoma@gmail.com';
 
       // Notification email to you
