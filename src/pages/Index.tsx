@@ -95,9 +95,20 @@ const Index = () => {
     setSubmitStatus('loading');
 
     try {
-      // Use Railway API URL from environment variable
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-      const response = await fetch(`${apiUrl}/api/submit-email`, {
+      // Use API URL from environment variable (required in production)
+      const apiUrl = (import.meta as any).env.VITE_API_URL || (import.meta as any).env.VITE_BACKEND_URL;
+      const isDev = (import.meta as any).env.DEV;
+      const resolvedBase = apiUrl ? String(apiUrl).replace(/\/$/, '') : (isDev ? 'http://localhost:3000' : '');
+
+      if (!resolvedBase) {
+        console.error('Missing VITE_API_URL in production. Set it to your Railway base URL.');
+        setSubmitStatus('error');
+        setSubmitMessage('Server not configured. Please try again shortly.');
+        return;
+      }
+
+      const endpoint = `${resolvedBase}/api/submit-email`;
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -110,7 +121,9 @@ const Index = () => {
         }),
       });
 
-      const data = await response.json().catch(() => ({}));
+      const text = await response.text().catch(() => '');
+      let data: any = {};
+      try { data = text ? JSON.parse(text) : {}; } catch {}
 
       if (response.ok && data?.success) {
         setSubmitStatus('success');
@@ -118,7 +131,7 @@ const Index = () => {
         setEmail('');
       } else {
         setSubmitStatus('error');
-        setSubmitMessage('Something went wrong. Please try again.');
+        setSubmitMessage('Unable to send right now. Please try again.');
       }
     } catch (error) {
       setSubmitStatus('error');
