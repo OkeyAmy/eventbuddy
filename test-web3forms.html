@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Web3Forms Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        input, textarea, button { padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; }
+        #result { margin-top: 20px; padding: 10px; border-radius: 5px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <h2>🧪 Web3Forms Test for EventBuddy</h2>
+    <form id="testForm">
+        <input type="hidden" name="access_key" value="c06ba29a-8f7c-463b-b639-110f51bfbefa">
+        
+        <label>Subject:</label>
+        <input type="text" name="subject" value="🧪 EventBuddy Web3Forms Test" required>
+        
+        <label>From Name:</label>
+        <input type="text" name="from_name" value="EventBuddy Test System" required>
+        
+        <label>Your Email (to receive notification):</label>
+        <input type="email" name="email" value="amaobiokeoma@gmail.com" required>
+        
+        <label>Test Message:</label>
+        <textarea name="message" rows="5" required>
+This is a test message to verify Web3Forms integration for EventBuddy.
+
+Test Data:
+- Email: test@example.com
+- Timestamp: 2025-01-02T10:00:00Z
+- Source: EventBuddy Landing Page
+- IP: 192.168.1.1
+
+If you receive this email, Web3Forms is working correctly!
+        </textarea>
+        
+        <input type="checkbox" name="botcheck" class="hidden" style="display: none;">
+        
+        <button type="submit">🚀 Send Test Email</button>
+    </form>
+    
+    <div id="result"></div>
+
+    <script>
+        const form = document.getElementById('testForm');
+        const result = document.getElementById('result');
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(form);
+            const object = Object.fromEntries(formData);
+            const json = JSON.stringify(object);
+            
+            result.innerHTML = "⏳ Sending test email...";
+            result.className = "";
+
+            fetch('https://api.web3forms.com/submit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: json
+            })
+            .then(async (response) => {
+                let json = await response.json();
+                if (response.status == 200) {
+                    result.innerHTML = "✅ Test email sent successfully! Check amaobiokeoma@gmail.com";
+                    result.className = "success";
+                } else {
+                    console.log(response);
+                    result.innerHTML = "❌ Failed: " + json.message;
+                    result.className = "error";
+                }
+            })
+            .catch(error => {
+                console.log(error);
+                result.innerHTML = "❌ Something went wrong: " + error.message;
+                result.className = "error";
+            });
+        });
+    </script>
+</body>
+</html>
