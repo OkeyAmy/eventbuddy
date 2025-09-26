@@ -95,7 +95,9 @@ const Index = () => {
     setSubmitStatus('loading');
 
     try {
-      const response = await fetch('/api/submit-email', {
+      // Use Railway API URL from environment variable
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      const response = await fetch(`${apiUrl}/api/submit-email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
