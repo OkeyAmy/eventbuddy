@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import Prism from '@/components/ui/prism';
+import { useState, useEffect, lazy, Suspense } from 'react';
+
+const PrismBg = lazy(() => import('@/components/ui/prism'));
 
 const Index = () => {
   const [isConnecting, setIsConnecting] = useState(false);
@@ -55,6 +56,20 @@ const Index = () => {
     } else {
       ldScript.textContent = JSON.stringify(ld);
     }
+  }, []);
+
+  // Defer heavy WebGL background until the browser is idle
+  const [showPrism, setShowPrism] = useState(false);
+  useEffect(() => {
+    const ric = (window as any).requestIdleCallback as
+      | ((cb: () => void, opts?: any) => number)
+      | undefined;
+    if (ric) {
+      const id = ric(() => setShowPrism(true), { timeout: 2000 });
+      return () => (window as any).cancelIdleCallback?.(id);
+    }
+    const t = setTimeout(() => setShowPrism(true), 300);
+    return () => clearTimeout(t);
   }, []);
 
   const handleDiscordConnect = async () => {
@@ -111,19 +126,25 @@ const Index = () => {
 
   return (
     <div className="min-h-screen relative flex items-center justify-center p-4 overflow-hidden">
-      {/* Prism Background (kept) */}
+      {/* Background: lightweight gradient first; lazy WebGL after idle */}
       <div className="fixed inset-0 z-0">
-        <Prism
-          animationType="rotate"
-          timeScale={0.2}
-          height={3.5}
-          baseWidth={1.5}
-          scale={4.6}
-          hueShift={-0.5}
-          colorFrequency={1}
-          noise={0}
-          glow={0.5}
-        />
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0b1220] via-[#101827] to-[#1f2937]" />
+        {showPrism && (
+          <Suspense fallback={<div className="absolute inset-0" />}>
+            <PrismBg
+              animationType="rotate"
+              timeScale={0.2}
+              height={3.5}
+              baseWidth={1.5}
+              scale={4.6}
+              hueShift={-0.5}
+              colorFrequency={1}
+              noise={0}
+              glow={0.5}
+              suspendWhenOffscreen={true}
+            />
+          </Suspense>
+        )}
       </div>
       
       {/* Top glass nav pill - Mobile optimized */}
