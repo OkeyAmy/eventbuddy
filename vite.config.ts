@@ -29,7 +29,11 @@ export default defineConfig({
     rollupOptions: {
       external: ['fs', 'path', 'crypto'],
       output: {
-        manualChunks: undefined,
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          'ogl-prism': ['ogl'],
+          'ui-components': ['@radix-ui/react-dialog', '@radix-ui/react-slot'],
+        },
       },
     },
   },

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import Prism from '@/components/ui/prism';
+import { useState, useEffect, lazy, Suspense } from 'react';
+
+const PrismBg = lazy(() => import('@/components/ui/prism'));
 
 const Index = () => {
   const [isConnecting, setIsConnecting] = useState(false);
@@ -57,6 +58,20 @@ const Index = () => {
     }
   }, []);
 
+  // Defer heavy WebGL background until the browser is idle
+  const [showPrism, setShowPrism] = useState(false);
+  useEffect(() => {
+    const ric = (window as any).requestIdleCallback as
+      | ((cb: () => void, opts?: any) => number)
+      | undefined;
+    if (ric) {
+      const id = ric(() => setShowPrism(true), { timeout: 2000 });
+      return () => (window as any).cancelIdleCallback?.(id);
+    }
+    const t = setTimeout(() => setShowPrism(true), 300);
+    return () => clearTimeout(t);
+  }, []);
+
   const handleDiscordConnect = async () => {
     setIsConnecting(true);
     try {
@@ -80,7 +95,20 @@ const Index = () => {
     setSubmitStatus('loading');
 
     try {
-      const response = await fetch('/api/submit-email', {
+      // Use API URL from environment variable (required in production)
+      const apiUrl = (import.meta as any).env.VITE_API_URL || (import.meta as any).env.VITE_BACKEND_URL;
+      const isDev = (import.meta as any).env.DEV;
+      const resolvedBase = apiUrl ? String(apiUrl).replace(/\/$/, '') : (isDev ? 'http://localhost:3000' : '');
+
+      if (!resolvedBase) {
+        console.error('Missing VITE_API_URL in production. Set it to your Railway base URL.');
+        setSubmitStatus('error');
+        setSubmitMessage('Server not configured. Please try again shortly.');
+        return;
+      }
+
+      const endpoint = `${resolvedBase}/api/submit-email`;
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -93,7 +121,9 @@ const Index = () => {
         }),
       });
 
-      const data = await response.json().catch(() => ({}));
+      const text = await response.text().catch(() => '');
+      let data: any = {};
+      try { data = text ? JSON.parse(text) : {}; } catch {}
 
       if (response.ok && data?.success) {
         setSubmitStatus('success');
@@ -101,7 +131,7 @@ const Index = () => {
         setEmail('');
       } else {
         setSubmitStatus('error');
-        setSubmitMessage('Something went wrong. Please try again.');
+        setSubmitMessage('Unable to send right now. Please try again.');
       }
     } catch (error) {
       setSubmitStatus('error');
@@ -111,19 +141,25 @@ const Index = () => {
 
   return (
     <div className="min-h-screen relative flex items-center justify-center p-4 overflow-hidden">
-      {/* Prism Background (kept) */}
+      {/* Background: lightweight gradient first; lazy WebGL after idle */}
       <div className="fixed inset-0 z-0">
-        <Prism
-          animationType="rotate"
-          timeScale={0.2}
-          height={3.5}
-          baseWidth={1.5}
-          scale={4.6}
-          hueShift={-0.5}
-          colorFrequency={1}
-          noise={0}
-          glow={0.5}
-        />
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0b1220] via-[#101827] to-[#1f2937]" />
+        {showPrism && (
+          <Suspense fallback={<div className="absolute inset-0" />}>
+            <PrismBg
+              animationType="rotate"
+              timeScale={0.2}
+              height={3.5}
+              baseWidth={1.5}
+              scale={4.6}
+              hueShift={-0.5}
+              colorFrequency={1}
+              noise={0}
+              glow={0.5}
+              suspendWhenOffscreen={true}
+            />
+          </Suspense>
+        )}
       </div>
       
       {/* Top glass nav pill - Mobile optimized */}
